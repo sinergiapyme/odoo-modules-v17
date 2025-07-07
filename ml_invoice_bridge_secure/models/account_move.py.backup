@@ -382,7 +382,7 @@ class AccountMove(models.Model):
             _logger.info('Starting upload for invoice %s, pack_id: %s', self.name, self.ml_pack_id)
             
             # ÚNICO CAMBIO: Método específico para el reporte correcto
-            pdf_content = self._generate_pdf_adhoc_priority()
+            pdf_content = self._generate_pdf_targeted_report()
             
             # Upload - SIN CAMBIOS
             result = self._upload_to_ml_api(self.ml_pack_id, pdf_content, config.access_token)
