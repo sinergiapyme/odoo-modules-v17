@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Vista de formulario - SIN CAMBIOS (ya funciona) -->
+    <record id="view_move_form_ml_extension" model="ir.ui.view">
+        <field name="name">account.move.form.ml.extension</field>
+        <field name="model">account.move</field>
+        <field name="inherit_id" ref="account.view_move_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//header" position="inside">
+                <button name="action_upload_to_mercadolibre" string="Upload to MercadoLibre" type="object" class="btn-primary" invisible="not is_ml_sale or ml_uploaded or state != 'posted'"/>
+            </xpath>
+            <xpath expr="//field[@name='ref']" position="after">
+                <group name="mercadolibre_info" string="MercadoLibre" invisible="not is_ml_sale">
+                    <field name="is_ml_sale"/>
+                    <field name="ml_pack_id"/>
+                    <field name="ml_uploaded"/>
+                    <field name="ml_upload_date" invisible="not ml_upload_date"/>
+                </group>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- CAMBIO PRINCIPAL: Solo cambiar domain de la acción, sin tocar vistas de búsqueda -->
+    <record id="action_invoice_ml_sales" model="ir.actions.act_window">
+        <field name="name">MercadoLibre Invoices</field>
+        <field name="res_model">account.move</field>
+        <field name="view_mode">tree,form</field>
+        <!-- ÚNICO CAMBIO: Solo facturas ML pendientes por defecto -->
+        <field name="domain">[('is_ml_sale', '=', True), ('ml_uploaded', '=', False)]</field>
+        <field name="context">{'default_is_ml_sale': True, 'create': False}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                No hay facturas de MercadoLibre pendientes
+            </p>
+            <p>
+                Las facturas de MercadoLibre pendientes de subir aparecerán aquí.
+            </p>
+        </field>
+    </record>
+</odoo>

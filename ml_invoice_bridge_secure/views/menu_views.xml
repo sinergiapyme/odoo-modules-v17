@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <menuitem id="menu_mercadolibre_main" name="MercadoLibre" sequence="85"/>
+    <menuitem id="menu_mercadolibre_config" name="Configuration" parent="menu_mercadolibre_main" action="action_mercadolibre_config" sequence="10"/>
+    <menuitem id="menu_mercadolibre_logs" name="Upload Logs" parent="menu_mercadolibre_main" action="action_mercadolibre_log" sequence="20"/>
+    <menuitem id="menu_mercadolibre_invoices" name="ML Invoices" parent="menu_mercadolibre_main" action="action_invoice_ml_sales" sequence="30"/>
+</odoo>

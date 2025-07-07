@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_mercadolibre_log_tree" model="ir.ui.view">
+        <field name="name">mercadolibre.log.tree</field>
+        <field name="model">mercadolibre.log</field>
+        <field name="arch" type="xml">
+            <tree string="Upload Logs" create="false">
+                <field name="create_date"/>
+                <field name="invoice_id"/>
+                <field name="pack_id"/>
+                <field name="status"/>
+                <field name="message"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_mercadolibre_log_form" model="ir.ui.view">
+        <field name="name">mercadolibre.log.form</field>
+        <field name="model">mercadolibre.log</field>
+        <field name="arch" type="xml">
+            <form string="Upload Log" create="false" edit="false">
+                <sheet>
+                    <group>
+                        <field name="create_date"/>
+                        <field name="invoice_id"/>
+                        <field name="pack_id"/>
+                        <field name="status"/>
+                        <field name="message"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_mercadolibre_log" model="ir.actions.act_window">
+        <field name="name">Upload Logs</field>
+        <field name="res_model">mercadolibre.log</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+</odoo>

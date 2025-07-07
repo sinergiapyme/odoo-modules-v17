@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_mercadolibre_config_form" model="ir.ui.view">
+        <field name="name">mercadolibre.config.form</field>
+        <field name="model">mercadolibre.config</field>
+        <field name="arch" type="xml">
+            <form string="MercadoLibre Configuration">
+                <header>
+                    <button name="test_api_connection" string="Test Connection" type="object" class="btn-primary"/>
+                    <button name="refresh_access_token" string="Refresh Token" type="object" class="btn-secondary" invisible="refresh_token == False"/>
+                </header>
+                <sheet>
+                    <group>
+                        <group string="Configuración OAuth">
+                            <field name="name"/>
+                            <field name="client_id"/>
+                            <field name="client_secret" password="True"/>
+                            <field name="active"/>
+                        </group>
+                        <group string="Tokens">
+                            <field name="access_token" password="True"/>
+                            <field name="refresh_token" password="True"/>
+                            <field name="ml_user_id" readonly="1"/>
+                            <field name="auto_upload"/>
+                        </group>
+                    </group>
+                    <group string="Estado">
+                        <field name="api_status"/>
+                        <field name="last_test" invisible="last_test == False"/>
+                        <field name="last_token_refresh" invisible="last_token_refresh == False"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_mercadolibre_config" model="ir.actions.act_window">
+        <field name="name">MercadoLibre Configuration</field>
+        <field name="res_model">mercadolibre.config</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+</odoo>
