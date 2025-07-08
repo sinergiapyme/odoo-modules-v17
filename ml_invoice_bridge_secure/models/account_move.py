@@ -219,110 +219,100 @@ class AccountMove(models.Model):
 
     def _generate_pdf_adhoc_priority(self):
         """
-        ÚNICO CAMBIO: Intenta reportes ADHOC ANTES del fallback HTML
-        SEGURIDAD: Mantiene el mismo fallback que ya funciona
+        VERSIÓN EXACTA - Usa el reporte confirmado que funciona desde GUI
+        PLANTILLA: account.report_invoice (confirmado en GUI)
+        GARANTIZADO: Mismo PDF que "Facturas sin pago" en GUI
         """
         try:
-            _logger.info('Generating PDF for invoice %s with ADHOC priority', self.name)
+            _logger.info('Generating legal PDF for invoice %s using confirmed template', self.name)
             
-            # IDs corruptos conocidos que debemos evitar (ya identificados antes)
-            corrupted_report_ids = [213, 214, 215]
-            
-            # PASO 1: Intentar reportes ADHOC Argentina específicos
+            # MÉTODO 1: Usar exactamente el reporte "Facturas sin pago" (CONFIRMADO)
             try:
-                _logger.info('Trying ADHOC Argentina reports')
+                # Esta es la plantilla exacta confirmada: account.report_invoice
+                report = self.env.ref('account.report_invoice', raise_if_not_found=False)
                 
-                adhoc_report_refs = [
-                    'l10n_ar.report_invoice',
-                    'l10n_ar_reports.action_report_invoice_electronic', 
-                    'l10n_ar.action_report_invoice'
+                if report:
+                    _logger.info('Using confirmed legal report: account.report_invoice')
+                    result = report._render_qweb_pdf(self.ids)
+                    
+                    if isinstance(result, tuple) and len(result) >= 1:
+                        pdf_content = result[0]
+                        if pdf_content and len(pdf_content) > 5000:
+                            _logger.info('SUCCESS: Legal PDF generated (%d bytes) using account.report_invoice', 
+                                       len(pdf_content))
+                            return pdf_content
+                
+            except Exception as e:
+                _logger.warning('Primary report account.report_invoice failed: %s', str(e))
+            
+            # MÉTODO 2: Backup - Reporte "Facturas" (también confirmado que funciona)
+            try:
+                report = self.env.ref('account.report_invoice_with_payments', raise_if_not_found=False)
+                
+                if report:
+                    _logger.info('Using backup legal report: account.report_invoice_with_payments')
+                    result = report._render_qweb_pdf(self.ids)
+                    
+                    if isinstance(result, tuple) and len(result) >= 1:
+                        pdf_content = result[0]
+                        if pdf_content and len(pdf_content) > 5000:
+                            _logger.info('SUCCESS: Legal PDF generated (%d bytes) using backup report', 
+                                       len(pdf_content))
+                            return pdf_content
+                            
+            except Exception as e:
+                _logger.warning('Backup report failed: %s', str(e))
+            
+            # MÉTODO 3: Intentar reportes l10n_ar específicos (ya tienes instalados)
+            try:
+                # Basado en las vistas que me mostraste
+                ar_report_refs = [
+                    'l10n_ar_ux.report_invoice',           # Vista de l10n_ar_ux
+                    'l10n_ar.report_invoice',              # Vista base l10n_ar  
+                    'l10n_ar_afipws_fe.report_invoice',    # Vista AFIP WebService
                 ]
                 
-                for report_ref in adhoc_report_refs:
+                for report_ref in ar_report_refs:
                     try:
                         report = self.env.ref(report_ref, raise_if_not_found=False)
-                        if report and hasattr(report, '_render_qweb_pdf'):
-                            # Verificar que no sea corrupto
-                            if hasattr(report, 'id') and report.id in corrupted_report_ids:
-                                _logger.info('Skipping corrupted ADHOC report ID: %d', report.id)
-                                continue
-                            
-                            _logger.info('Trying ADHOC report: %s (ID: %d)', report_ref, getattr(report, 'id', 0))
-                            
+                        if report:
+                            _logger.info('Trying Argentina specific report: %s', report_ref)
                             result = report._render_qweb_pdf(self.ids)
+                            
                             if isinstance(result, tuple) and len(result) >= 1:
                                 pdf_content = result[0]
-                                if pdf_content and len(pdf_content) > 5000:  # ADHOC debe ser >5KB
-                                    _logger.info('SUCCESS: ADHOC PDF generated (%d bytes) with: %s', len(pdf_content), report_ref)
+                                if pdf_content and len(pdf_content) > 5000:
+                                    _logger.info('SUCCESS: Argentina PDF (%d bytes) with: %s', 
+                                               len(pdf_content), report_ref)
                                     return pdf_content
                                     
                     except Exception as e:
-                        _logger.info('ADHOC report %s failed: %s', report_ref, str(e))
+                        _logger.info('Argentina report %s failed: %s', report_ref, str(e))
                         continue
                         
             except Exception as e:
-                _logger.info('ADHOC search failed: %s', str(e))
+                _logger.warning('Argentina reports search failed: %s', str(e))
             
-            # PASO 2: Buscar otros reportes Argentina no corruptos
-            try:
-                _logger.info('Trying other Argentina reports')
-                
-                all_reports = self.env['ir.actions.report'].search([
-                    ('model', '=', 'account.move'),
-                    ('report_type', '=', 'qweb-pdf'),
-                    ('id', 'not in', corrupted_report_ids)
-                ])
-                
-                # Filtrar reportes que pueden ser de Argentina
-                argentina_reports = all_reports.filtered(
-                    lambda r: any(keyword in r.report_name.lower() 
-                                for keyword in ['ar', 'argentina', 'l10n_ar', 'adhoc'])
-                )
-                
-                _logger.info('Found %d potential Argentina reports', len(argentina_reports))
-                
-                for report in argentina_reports:
-                    try:
-                        _logger.info('Trying Argentina report ID: %d, name: %s', report.id, report.report_name)
-                        
-                        result = report._render_qweb_pdf(self.ids)
-                        if isinstance(result, tuple) and len(result) >= 1:
-                            pdf_content = result[0]
-                            if pdf_content and len(pdf_content) > 5000:
-                                _logger.info('SUCCESS: Argentina PDF generated (%d bytes) with ID: %d', len(pdf_content), report.id)
-                                return pdf_content
-                                
-                    except Exception as e:
-                        _logger.info('Argentina report %d failed: %s', report.id, str(e))
-                        continue
-                        
-            except Exception as e:
-                _logger.info('Argentina reports search failed: %s', str(e))
+            # FALLO TOTAL - Error con información específica
+            error_msg = (
+                'CRÍTICO: No se pudo generar PDF legal para factura %s.\n\n'
+                'Se intentaron estos reportes:\n'
+                '• account.report_invoice (Facturas sin pago)\n'
+                '• account.report_invoice_with_payments (Facturas)\n'
+                '• Reportes l10n_ar específicos\n\n'
+                'TODOS fallaron. Contacte al administrador.\n'
+                'La factura NO se puede subir a MercadoLibre sin PDF legal.'
+            ) % self.name
             
-            # PASO 3: FALLBACK - Usar el método HTML que YA FUNCIONA
-            _logger.info('ADHOC reports not available, using proven HTML fallback')
-            
-            try:
-                html_content = self._generate_html_invoice()
-                pdf_content = self._html_to_pdf_wkhtmltopdf(html_content)
-                
-                if pdf_content and len(pdf_content) > 100:
-                    _logger.info('FALLBACK: HTML PDF generated successfully (%d bytes)', len(pdf_content))
-                    return pdf_content
-                    
-            except Exception as e:
-                _logger.error('Even HTML fallback failed: %s', str(e))
-            
-            # Si TODO falla (muy improbable)
-            raise UserError('No se pudo generar PDF.\n'
-                          'Contacte al administrador del sistema.')
+            _logger.error(error_msg)
+            raise UserError(error_msg)
             
         except UserError:
             raise
         except Exception as e:
-            error_msg = 'Error generating PDF for %s: %s' % (self.name, str(e))
+            error_msg = 'Error crítico generando PDF legal para %s: %s' % (self.name, str(e))
             _logger.error(error_msg)
-            raise UserError('Error generando PDF: %s' % str(e))
+            raise UserError('Error crítico: %s' % str(e))
 
     def _upload_to_ml_api(self, pack_id, pdf_content, access_token):
         """Upload a MercadoLibre - SIN CAMBIOS (ya funciona perfectamente)"""
