@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
-    <!-- Tree View -->
+    <!-- Tree View - CON todos los botones funcionando -->
     <record id="view_mercadolibre_log_tree" model="ir.ui.view">
         <field name="name">mercadolibre.log.tree</field>
         <field name="model">mercadolibre.log</field>
@@ -13,6 +13,7 @@
                        decoration-success="status == 'success'"
                        decoration-danger="status == 'error'"/>
                 <field name="message"/>
+                <!-- Botones de acción funcionando -->
                 <button name="action_view_invoice" 
                         type="object" 
                         icon="fa-external-link" 
@@ -22,12 +23,13 @@
                         type="object" 
                         icon="fa-refresh" 
                         title="Retry Upload"
-                        invisible="status == 'success' or invoice_id == False"/>
+                        invisible="status == 'success' or invoice_id == False"
+                        confirm="¿Está seguro de reintentar la subida de esta factura?"/>
             </tree>
         </field>
     </record>
 
-    <!-- Form View -->
+    <!-- Form View - CON header buttons -->
     <record id="view_mercadolibre_log_form" model="ir.ui.view">
         <field name="name">mercadolibre.log.form</field>
         <field name="model">mercadolibre.log</field>
@@ -43,7 +45,8 @@
                             string="Retry Upload" 
                             type="object"
                             class="btn-secondary"
-                            invisible="status == 'success' or invoice_id == False"/>
+                            invisible="status == 'success' or invoice_id == False"
+                            confirm="¿Está seguro de reintentar la subida de esta factura?"/>
                 </header>
                 <sheet>
                     <group>
@@ -67,7 +70,7 @@
         </field>
     </record>
 
-    <!-- Search View -->
+    <!-- Search View - CON filtros mejorados -->
     <record id="view_mercadolibre_log_search" model="ir.ui.view">
         <field name="name">mercadolibre.log.search</field>
         <field name="model">mercadolibre.log</field>
@@ -76,25 +79,41 @@
                 <field name="invoice_id"/>
                 <field name="pack_id"/>
                 <field name="message"/>
+                
+                <!-- Filtros básicos -->
                 <filter string="Success" name="filter_success" domain="[('status', '=', 'success')]"/>
                 <filter string="Errors" name="filter_errors" domain="[('status', '=', 'error')]"/>
+                
                 <separator/>
+                
+                <!-- Filtros de fecha -->
                 <filter string="Today" name="filter_today" 
                         domain="[('create_date', '&gt;=', datetime.datetime.combine(context_today(), datetime.time(0,0,0)))]"/>
                 <filter string="This Week" name="filter_week" 
                         domain="[('create_date', '&gt;=', (context_today() - datetime.timedelta(days=7)).strftime('%Y-%m-%d'))]"/>
                 <filter string="This Month" name="filter_month" 
                         domain="[('create_date', '&gt;=', (context_today().replace(day=1)).strftime('%Y-%m-%d'))]"/>
+                
+                <separator/>
+                
+                <!-- Filtros de estado de factura -->
+                <filter string="Pending Upload" name="filter_pending" 
+                        domain="[('status', '=', 'error'), ('invoice_id.ml_uploaded', '=', False)]"/>
+                <filter string="Already Uploaded" name="filter_uploaded" 
+                        domain="[('invoice_id.ml_uploaded', '=', True)]"/>
+                
+                <!-- Agrupaciones -->
                 <group expand="0" string="Group By">
                     <filter string="Status" name="group_by_status" context="{'group_by': 'status'}"/>
                     <filter string="Date" name="group_by_date" context="{'group_by': 'create_date:day'}"/>
                     <filter string="Invoice" name="group_by_invoice" context="{'group_by': 'invoice_id'}"/>
+                    <filter string="Pack ID" name="group_by_pack" context="{'group_by': 'pack_id'}"/>
                 </group>
             </search>
         </field>
     </record>
 
-    <!-- Action -->
+    <!-- Action principal -->
     <record id="action_mercadolibre_log" model="ir.actions.act_window">
         <field name="name">Upload Logs</field>
         <field name="res_model">mercadolibre.log</field>
@@ -108,6 +127,22 @@
                 Upload logs will appear here when you start uploading invoices to MercadoLibre.
                 Both successful uploads and errors will be logged for auditing purposes.
             </p>
+            <p>
+                <strong>Available actions:</strong><br/>
+                • Click the external link icon to view the related invoice<br/>
+                • Click the refresh icon to retry failed uploads<br/>
+                • Use filters to find specific logs or errors<br/>
+            </p>
         </field>
+    </record>
+
+    <!-- Action para retry en bulk -->
+    <record id="action_retry_upload_bulk" model="ir.actions.server">
+        <field name="name">Retry Upload</field>
+        <field name="model_id" ref="model_mercadolibre_log"/>
+        <field name="binding_model_id" ref="model_mercadolibre_log"/>
+        <field name="binding_view_types">list</field>
+        <field name="state">code</field>
+        <field name="code">action = records.action_retry_upload_bulk()</field>
     </record>
 </odoo>
