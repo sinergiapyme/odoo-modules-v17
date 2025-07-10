@@ -78,164 +78,10 @@ class AccountMove(models.Model):
                 except OSError as e:
                     _logger.warning('FILESTORE-SAFE: Could not clean temp file %s: %s', temp_path, str(e))
 
-    def _validate_legal_qr_content(self, pdf_content):
+    def _generate_pdf_simple_approach(self):
         """
-        🛡️ VALIDACIÓN DEFINITIVA: QR DE AFIP PRESENTE
-        Si el PDF contiene QR de AFIP, es un documento legal válido
-        """
-        if not pdf_content or len(pdf_content) < 5000:
-            _logger.error("PDF demasiado pequeño para ser un documento legal válido")
-            return False
-        
-        # INDICADORES QR DE AFIP (GARANTÍA DE LEGALIDAD)
-        afip_qr_indicators = [
-            b'afip.gob.ar/fe/qr',     # QR oficial de AFIP
-            b'www.afip.gob.ar/fe/qr', # Variante con www
-            b'afip.gob.ar',           # Dominio AFIP general
-            b'qr.afip.gob.ar'         # Subdominio QR
-        ]
-        
-        # Verificar presencia de QR AFIP
-        has_afip_qr = any(indicator in pdf_content for indicator in afip_qr_indicators)
-        
-        if has_afip_qr:
-            _logger.info("✅ PDF LEGAL CONFIRMADO: Contiene QR de AFIP - Documento válido para Argentina")
-            return True
-        
-        # VALIDACIÓN SECUNDARIA: Si no tiene QR, verificar otros elementos legales
-        secondary_legal_indicators = [
-            b'CAE',                   # Código de Autorización Electrónico
-            b'CUIT',                  # CUIT de la empresa
-            b'AFIP',                  # Mención de AFIP
-            b'Responsable Inscripto'  # Condición ante IVA
-        ]
-        
-        found_secondary = [indicator.decode('utf-8', errors='ignore') 
-                          for indicator in secondary_legal_indicators 
-                          if indicator in pdf_content]
-        
-        if len(found_secondary) >= 3:
-            _logger.warning(f"⚠️ PDF sin QR AFIP pero con elementos legales: {found_secondary}")
-            _logger.warning("Aceptando PDF pero recomienda verificar configuración de QR")
-            return True
-        
-        # VALIDACIÓN ESTRUCTURAL: PDF válido pero sin elementos legales
-        if pdf_content.startswith(b'%PDF') and len(pdf_content) > 20000:
-            _logger.error(f"🚨 PDF RECHAZADO: Estructura válida pero SIN elementos legales argentinos")
-            _logger.error(f"Tamaño: {len(pdf_content)} bytes, Elementos encontrados: {found_secondary}")
-            return False
-        
-        _logger.error("🚨 PDF RECHAZADO: No es un documento legal argentino válido")
-        return False
-
-    def _get_default_invoice_report(self):
-        """
-        🎯 MÉTODO CLAVE: Obtiene el reporte por defecto de facturas
-        EXACTAMENTE como lo hace la GUI cuando presionas "Print"
-        """
-        self.ensure_one()
-        
-        try:
-            # MÉTODO 1: Usar el mismo mecanismo que la GUI
-            # La GUI busca el reporte por defecto para el modelo account.move
-            
-            # Buscar reportes activos para facturas
-            invoice_reports = self.env['ir.actions.report'].search([
-                ('model', '=', 'account.move'),
-                ('report_type', '=', 'qweb-pdf'),
-                ('groups_id', '=', False),  # Sin restricciones de grupos (accesible para todos)
-            ], order='id desc')  # Los más recientes primero
-            
-            _logger.info(f'Found {len(invoice_reports)} available invoice reports')
-            
-            for report in invoice_reports:
-                _logger.info(f'Checking report: {report.name} (ID: {report.id}, Template: {report.report_name})')
-                
-                # Verificar que el reporte sea válido para este registro
-                try:
-                    # Probar renderizado (como hace la GUI internamente)
-                    test_result = report._render_qweb_pdf(self.ids)
-                    
-                    if isinstance(test_result, tuple) and len(test_result) >= 1:
-                        pdf_content = test_result[0]
-                        if pdf_content and len(pdf_content) > 1000:  # PDF válido
-                            
-                            # 🛡️ VALIDACIÓN QR CRÍTICA AQUÍ
-                            if self._validate_legal_qr_content(pdf_content):
-                                _logger.info(f'✅ Report {report.name} (ID: {report.id}) generated LEGAL PDF with QR ({len(pdf_content)} bytes)')
-                                return report
-                            else:
-                                _logger.warning(f'🚨 Report {report.name} generated PDF WITHOUT legal QR - REJECTED')
-                                continue
-                        else:
-                            _logger.debug(f'Report {report.name} generated empty or small PDF')
-                            
-                except Exception as e:
-                    _logger.debug(f'Report {report.name} failed test: {str(e)}')
-                    continue
-            
-            # MÉTODO 2: Buscar el reporte específico que aparece en el menú Print
-            # El que tiene binding_model_id configurado
-            bound_reports = self.env['ir.actions.report'].search([
-                ('model', '=', 'account.move'),
-                ('report_type', '=', 'qweb-pdf'),
-                ('binding_model_id', '!=', False),  # Tiene binding (aparece en menú)
-            ], order='id desc')
-            
-            _logger.info(f'Found {len(bound_reports)} bound reports (with Print menu)')
-            
-            for report in bound_reports:
-                try:
-                    test_result = report._render_qweb_pdf(self.ids)
-                    if isinstance(test_result, tuple) and test_result[0] and len(test_result[0]) > 1000:
-                        
-                        # 🛡️ VALIDACIÓN QR CRÍTICA AQUÍ
-                        if self._validate_legal_qr_content(test_result[0]):
-                            _logger.info(f'✅ Bound report {report.name} (ID: {report.id}) generated LEGAL PDF with QR')
-                            return report
-                        else:
-                            _logger.warning(f'🚨 Bound report {report.name} generated PDF WITHOUT legal QR - REJECTED')
-                            continue
-                            
-                except Exception as e:
-                    _logger.debug(f'Bound report {report.name} failed: {str(e)}')
-                    continue
-            
-            # MÉTODO 3: Último recurso - cualquier reporte que funcione CON QR
-            all_reports = self.env['ir.actions.report'].search([
-                ('model', '=', 'account.move'),
-                ('report_type', '=', 'qweb-pdf')
-            ])
-            
-            _logger.warning(f'Trying last resort with {len(all_reports)} total reports')
-            
-            for report in all_reports:
-                try:
-                    test_result = report._render_qweb_pdf(self.ids)
-                    if isinstance(test_result, tuple) and test_result[0] and len(test_result[0]) > 1000:
-                        
-                        # 🛡️ VALIDACIÓN QR CRÍTICA AQUÍ
-                        if self._validate_legal_qr_content(test_result[0]):
-                            _logger.warning(f'⚠️ Last resort: Using report {report.name} (ID: {report.id}) with legal QR')
-                            return report
-                        else:
-                            _logger.debug(f'Last resort report {report.name} has no legal QR')
-                            continue
-                            
-                except Exception as e:
-                    continue
-            
-            return None
-            
-        except Exception as e:
-            _logger.error(f'Error finding default invoice report: {str(e)}')
-            return None
-
-    def _generate_pdf_like_gui(self):
-        """
-        🎯 GENERACIÓN EXACTA COMO LA GUI CON VALIDACIÓN QR
-        Replica el proceso que funciona desde el botón "Print"
-        GARANTIZA que solo retorna PDFs con QR de AFIP
+        🎯 ENFOQUE SIMPLE Y SEGURO
+        Usa el reporte por defecto sin interferir con ADHOC
         """
         self.ensure_one()
         
@@ -243,62 +89,56 @@ class AccountMove(models.Model):
             _logger.info('Starting upload for invoice %s, pack_id: %s', self.name, self.ml_pack_id)
             _logger.info('Generating legal PDF for invoice %s using correct report objects', self.name)
             
-            # Obtener el reporte por defecto que genere PDF con QR AFIP
-            report = self._get_default_invoice_report()
+            # MÉTODO SIMPLE: Buscar reportes sin complejidad
+            reports = self.env['ir.actions.report'].search([
+                ('model', '=', 'account.move'),
+                ('report_type', '=', 'qweb-pdf')
+            ], order='id desc')
             
-            if not report:
-                error_msg = (
-                    f'🚨 CRÍTICO: No se encontró ningún reporte que genere PDF con QR de AFIP para la factura {self.name}.\n\n'
-                    'ESTO SIGNIFICA QUE:\n'
-                    '• Los módulos de localización argentina no están configurados correctamente\n'
-                    '• La facturación electrónica AFIP no está funcionando\n'
-                    '• No hay reportes legales disponibles\n\n'
-                    '🔧 SOLUCIÓN REQUERIDA:\n'
-                    '• Verificar que la factura se pueda imprimir desde la GUI con QR\n'
-                    '• Instalar/configurar módulos l10n_ar_ux o similares\n'
-                    '• Configurar certificados AFIP\n\n'
-                    '🛡️ PROTECCIÓN ACTIVADA: No se subirá documento sin QR legal'
-                )
-                _logger.error(error_msg)
-                raise UserError(error_msg)
+            _logger.info(f'Found {len(reports)} available reports for account.move')
             
-            _logger.info(f'Using report: {report.name} (ID: {report.id}, Template: {report.report_name})')
-            
-            # Generar PDF EXACTAMENTE como lo hace la GUI
-            try:
-                result = report._render_qweb_pdf(self.ids)
-                
-                if isinstance(result, tuple) and len(result) >= 1:
-                    pdf_content = result[0]
+            # Probar reportes hasta encontrar uno que funcione
+            for report in reports:
+                try:
+                    _logger.info(f'Trying report: {report.name} (ID: {report.id})')
                     
-                    if pdf_content and len(pdf_content) > 1000:
-                        
-                        # 🛡️ VALIDACIÓN FINAL DE QR (DOBLE VERIFICACIÓN)
-                        if self._validate_legal_qr_content(pdf_content):
-                            _logger.info(f'✅ SUCCESS: PDF with legal QR generated successfully ({len(pdf_content)} bytes)')
-                            _logger.info('The PDF report has been generated for model: account.move, records %s', self.ids)
-                            return pdf_content
+                    # Generar PDF
+                    result = report._render_qweb_pdf(self.ids)
+                    
+                    if isinstance(result, tuple) and len(result) >= 1:
+                        pdf_content = result[0]
+                        if pdf_content and len(pdf_content) > 5000:
+                            
+                            # VALIDACIÓN SIMPLE: Solo verificar QR AFIP
+                            if b'afip.gob.ar' in pdf_content:
+                                _logger.info(f'✅ SUCCESS: Report {report.name} generated PDF with AFIP QR ({len(pdf_content)} bytes)')
+                                _logger.info('The PDF report has been generated for model: account.move, records %s', self.ids)
+                                return pdf_content
+                            else:
+                                _logger.info(f'Report {report.name} generated PDF but without AFIP QR - trying next')
+                                continue
                         else:
-                            # ESTO NO DEBERÍA PASAR si _get_default_invoice_report funciona bien
-                            raise UserError(f'El reporte {report.name} generó PDF pero sin QR de AFIP válido')
-                    else:
-                        raise UserError(f'El reporte {report.name} generó un PDF muy pequeño o vacío')
-                else:
-                    raise UserError(f'El reporte {report.name} no generó contenido válido')
-                    
-            except UserError:
-                raise
-            except Exception as e:
-                error_msg = f'Error generando PDF con reporte {report.name}: {str(e)}'
-                _logger.error(error_msg)
-                raise UserError(error_msg)
-                
+                            _logger.debug(f'Report {report.name} generated small PDF - trying next')
+                            continue
+                            
+                except Exception as e:
+                    _logger.debug(f'Report {report.name} failed: {str(e)} - trying next')
+                    continue
+            
+            # Si ningún reporte tiene QR, error claro
+            error_msg = (
+                f'No se pudo generar PDF con QR de AFIP para la factura {self.name}.\n'
+                'Verifique que la localización argentina esté configurada correctamente.'
+            )
+            _logger.error(error_msg)
+            raise UserError(error_msg)
+            
         except UserError:
             raise
         except Exception as e:
-            error_msg = f'Error crítico en generación de PDF para {self.name}: {str(e)}'
+            error_msg = f'Error generando PDF para {self.name}: {str(e)}'
             _logger.error(error_msg)
-            raise UserError(f'Error crítico: {str(e)}')
+            raise UserError(error_msg)
 
     def _upload_to_ml_api(self, pack_id, pdf_content, access_token):
         """
@@ -335,8 +175,7 @@ class AccountMove(models.Model):
 
     def action_upload_to_mercadolibre(self):
         """
-        🎯 ACCIÓN PRINCIPAL CON GARANTÍA QR
-        Usa el mismo mecanismo que la GUI + validación QR obligatoria
+        🎯 ACCIÓN PRINCIPAL SIMPLIFICADA Y SEGURA
         """
         self.ensure_one()
         
@@ -360,8 +199,8 @@ class AccountMove(models.Model):
 
             _logger.info('Starting upload for invoice %s, pack_id: %s', self.name, self.ml_pack_id)
             
-            # Generar PDF como lo hace la GUI (CON VALIDACIÓN QR OBLIGATORIA)
-            pdf_content = self._generate_pdf_like_gui()
+            # Generar PDF de forma simple
+            pdf_content = self._generate_pdf_simple_approach()
             
             # Upload
             result = self._upload_to_ml_api(self.ml_pack_id, pdf_content, config.access_token)
@@ -391,7 +230,7 @@ class AccountMove(models.Model):
                     'tag': 'display_notification',
                     'params': {
                         'title': '✅ Éxito',
-                        'message': 'Factura LEGAL con QR AFIP subida exitosamente a MercadoLibre',
+                        'message': 'Factura subida exitosamente a MercadoLibre',
                         'type': 'success'
                     }
                 }
@@ -428,7 +267,7 @@ class AccountMove(models.Model):
     @api.model
     def cron_upload_ml_invoices(self):
         """
-        CRON con protección QR obligatoria
+        CRON simplificado
         """
         try:
             config = self.env['mercadolibre.config'].get_active_config()
@@ -457,7 +296,7 @@ class AccountMove(models.Model):
                     with self.env.cr.savepoint():
                         invoice.action_upload_to_mercadolibre()
                         success_count += 1
-                        _logger.info(f'✅ Factura {invoice.name} con QR legal subida exitosamente')
+                        _logger.info(f'✅ Factura {invoice.name} subida exitosamente')
                     
                     self.env.cr.commit()
                     gc.collect()
@@ -480,16 +319,16 @@ class AccountMove(models.Model):
 
     def test_report_generation(self):
         """
-        🧪 MÉTODO DE PRUEBA CON VALIDACIÓN QR
+        🧪 MÉTODO DE PRUEBA SIMPLE
         """
         self.ensure_one()
         
         try:
-            _logger.info('=== TESTING REPORT GENERATION WITH QR VALIDATION FOR %s ===', self.name)
+            _logger.info('=== TESTING SIMPLE REPORT GENERATION FOR %s ===', self.name)
             
-            pdf_content = self._generate_pdf_like_gui()
+            pdf_content = self._generate_pdf_simple_approach()
             
-            # Verificación adicional de QR en la prueba
+            # Verificación básica
             has_qr = b'afip.gob.ar' in pdf_content
             
             result = {
@@ -498,8 +337,8 @@ class AccountMove(models.Model):
                 'pdf_size_bytes': len(pdf_content),
                 'pdf_size_kb': round(len(pdf_content) / 1024, 2),
                 'has_afip_qr': has_qr,
-                'message': '✅ PDF LEGAL con QR AFIP generado exitosamente',
-                'validation': 'PASSED - QR AFIP PRESENTE'
+                'message': '✅ PDF generado exitosamente' + (' con QR AFIP' if has_qr else ' sin QR AFIP'),
+                'validation': 'PASSED' if has_qr else 'WARNING - NO QR'
             }
             
             _logger.info('✅ TEST SUCCESS: %s', result)
@@ -511,8 +350,8 @@ class AccountMove(models.Model):
                 'invoice': self.name,
                 'error': str(e),
                 'has_afip_qr': False,
-                'message': '❌ Falló generación de PDF con QR legal',
-                'validation': 'FAILED - NO QR AFIP'
+                'message': '❌ Falló generación de PDF',
+                'validation': 'FAILED'
             }
             
             _logger.error('❌ TEST FAILED: %s', result)
