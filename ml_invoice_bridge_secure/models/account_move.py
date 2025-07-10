@@ -255,46 +255,136 @@ class AccountMove(models.Model):
     def _generate_pdf_adhoc_priority(self):
         """
         REPLICACIÓN EXACTA DE LA GUI - FILESTORE-SAFE
+        *** MÉTODO CORREGIDO PARA SOLUCIONAR ERROR [6] ***
         Usa exactamente el mismo proceso que funciona desde "Imprimir"
-        Basado en log: Report ID 215 funciona y genera QR + AFIP legal
+        Basado en imágenes: "Facturas sin pago" con template account.report_invoice funciona
         """
         try:
-            _logger.info('Generating legal PDF for invoice %s replicating GUI process', self.name)
+            _logger.info('Starting upload for invoice %s, pack_id: %s', self.name, self.ml_pack_id)
+            _logger.info('Generating legal PDF for invoice %s using correct report objects', self.name)
             
-            # MÉTODO 1: Usar el ID específico que vimos funcionando (215)
+            # *** CORRECCIÓN ESPECÍFICA DEL ERROR [6] ***
+            # MÉTODO 1: Buscar el reporte exacto que funciona desde la GUI
             try:
-                _logger.info('Using working report ID 215 (confirmed from GUI logs)')
+                _logger.info('Searching for exact GUI report: "Facturas sin pago"')
                 
-                # FILESTORE-SAFE: Acceso directo al reporte que sabemos que funciona
-                report = self.env['ir.actions.report'].browse(215)
+                # FILESTORE-SAFE: Buscar por nombre exacto que viste en la interfaz
+                gui_report = self.env['ir.actions.report'].search([
+                    ('name', '=', 'Facturas sin pago'),
+                    ('model', '=', 'account.move'),
+                    ('report_type', '=', 'qweb-pdf')
+                ], limit=1)
                 
-                if report.exists() and report.model == 'account.move':
-                    _logger.info('Report ID 215 exists and is for account.move')
+                if gui_report:
+                    _logger.info('Using confirmed legal report: %s (ID: %s)', gui_report.report_name, gui_report.id)
                     
                     # FILESTORE-SAFE: Llamar exactamente como lo hace la GUI
-                    result = report._render_qweb_pdf(self.ids)
+                    result = gui_report._render_qweb_pdf(self.ids)
                     
                     if isinstance(result, tuple) and len(result) >= 1:
                         pdf_content = result[0]
                         if pdf_content and len(pdf_content) > 5000:
-                            _logger.info('SUCCESS: GUI replication PDF generated (%d bytes) with QR and AFIP data', 
+                            _logger.info('SUCCESS: GUI report "Facturas sin pago" generated legal PDF (%d bytes)', 
                                        len(pdf_content))
                             return pdf_content
                         else:
-                            _logger.warning('Report ID 215 generated small PDF (%d bytes)', 
+                            _logger.warning('GUI report generated small PDF (%d bytes)', 
                                           len(pdf_content) if pdf_content else 0)
                 else:
-                    _logger.warning('Report ID 215 does not exist or wrong model')
+                    _logger.warning('GUI report "Facturas sin pago" not found')
                     
             except Exception as e:
-                _logger.warning('Report ID 215 failed: %s', str(e))
+                _logger.warning('GUI report "Facturas sin pago" failed: %s', str(e))
             
-            # MÉTODO 2: Probar otros IDs específicos de los logs
+            # MÉTODO 2: Buscar por template exacto que viste en las imágenes
             try:
-                _logger.info('Trying other report IDs from logs')
+                _logger.info('Searching for template: account.report_invoice')
                 
-                # IDs que aparecieron en los logs anteriores: 213, 214, 215
-                report_ids_to_try = [213, 214]  # 215 ya lo probamos
+                # FILESTORE-SAFE: Buscar por template exacto
+                template_report = self.env['ir.actions.report'].search([
+                    ('report_name', '=', 'account.report_invoice'),  # ← CORRECCIÓN: NO [6]
+                    ('model', '=', 'account.move'),
+                    ('report_type', '=', 'qweb-pdf')
+                ], limit=1)
+                
+                if template_report:
+                    _logger.info('Using backup legal report: %s (ID: %s)', template_report.name, template_report.id)
+                    
+                    result = template_report._render_qweb_pdf(self.ids)
+                    
+                    if isinstance(result, tuple) and len(result) >= 1:
+                        pdf_content = result[0]
+                        if pdf_content and len(pdf_content) > 5000:
+                            _logger.info('SUCCESS: Template report account.report_invoice generated legal PDF (%d bytes)', 
+                                       len(pdf_content))
+                            return pdf_content
+                else:
+                    _logger.warning('Template account.report_invoice not found')
+                    
+            except Exception as e:
+                _logger.warning('Template account.report_invoice search failed: %s', str(e))
+            
+            # MÉTODO 3: Buscar otros reportes de las imágenes que mostraste
+            try:
+                _logger.info('Searching for any working invoice report')
+                
+                # FILESTORE-SAFE: Reportes específicos que viste en las imágenes
+                report_templates = [
+                    'l10n_ar.report_invoice_document',
+                    'l10n_ar_afipws_fe.report_invoice_document', 
+                    'l10n_ar_ux.report_invoice_document',
+                    'l10n_ar_ux.report_invoice',
+                    'account.report_invoice_with_payments'
+                ]
+                
+                reports_found = []
+                for template_name in report_templates:
+                    try:
+                        report = self.env['ir.actions.report'].search([
+                            ('report_name', '=', template_name),  # ← CORRECCIÓN: string, NO lista
+                            ('model', '=', 'account.move')
+                        ], limit=1)
+                        
+                        if report:
+                            reports_found.append(report)
+                            _logger.info('Found report: %s (template: %s)', report.name, template_name)
+                            
+                    except Exception as e:
+                        _logger.warning('Error searching template %s: %s', template_name, str(e))
+                        continue
+                
+                _logger.info('Found %s total invoice reports to try', len(reports_found))
+                
+                # Probar cada reporte encontrado
+                for report in reports_found:
+                    try:
+                        _logger.info('Trying report ID: %s, template: %s', report.id, report.report_name)
+                        
+                        result = report._render_qweb_pdf(self.ids)
+                        
+                        if isinstance(result, tuple) and len(result) >= 1:
+                            pdf_content = result[0]
+                            if pdf_content and len(pdf_content) > 5000:
+                                _logger.info('SUCCESS: Report %s generated legal PDF (%d bytes)', 
+                                           report.name, len(pdf_content))
+                                return pdf_content
+                            else:
+                                _logger.debug('Report %s generated small PDF (%d bytes)', 
+                                            report.name, len(pdf_content) if pdf_content else 0)
+                                
+                    except Exception as e:
+                        _logger.debug('Report %s failed: %s', report.name, str(e))
+                        continue
+                        
+            except Exception as e:
+                _logger.warning('Report template search failed: %s', str(e))
+            
+            # MÉTODO 4: Usar IDs específicos que aparecieron en logs anteriores (con corrección)
+            try:
+                _logger.info('Trying specific report IDs from previous logs')
+                
+                # IDs que aparecieron en los logs: 213, 214, 215
+                report_ids_to_try = [215, 213, 214]  
                 
                 for report_id in report_ids_to_try:
                     try:
@@ -309,8 +399,8 @@ class AccountMove(models.Model):
                             if isinstance(result, tuple) and len(result) >= 1:
                                 pdf_content = result[0]
                                 if pdf_content and len(pdf_content) > 5000:
-                                    _logger.info('SUCCESS: Report ID %d generated legal PDF (%d bytes)', 
-                                               report_id, len(pdf_content))
+                                    _logger.info('SUCCESS: Report ID %d (%s) generated legal PDF (%d bytes)', 
+                                               report_id, report.name, len(pdf_content))
                                     return pdf_content
                                     
                     except Exception as e:
@@ -320,63 +410,23 @@ class AccountMove(models.Model):
             except Exception as e:
                 _logger.warning('Specific report IDs search failed: %s', str(e))
             
-            # MÉTODO 3: Buscar reportes activos sin filtros de nombres corruptos
+            # MÉTODO 5: Buscar cualquier reporte activo sin filtros problemáticos
             try:
-                _logger.info('Searching for active reports without name filters')
+                _logger.info('Searching for any active account.move reports')
                 
-                # FILESTORE-SAFE: Buscar por campos que no están corruptos
-                reports = self.env['ir.actions.report'].search([
-                    ('model', '=', 'account.move'),
-                    ('report_type', '=', 'qweb-pdf'),
-                    ('binding_model_id', '!=', False)  # Reportes que aparecen en menú
-                ], order='id desc')  # Los más recientes primero
-                
-                _logger.info('Found %d bound reports for account.move', len(reports))
-                
-                for report in reports[:5]:  # Probar solo los primeros 5
-                    try:
-                        _logger.info('Trying bound report ID: %d', report.id)
-                        
-                        # FILESTORE-SAFE: Generar PDF directamente
-                        result = report._render_qweb_pdf(self.ids)
-                        
-                        if isinstance(result, tuple) and len(result) >= 1:
-                            pdf_content = result[0]
-                            if pdf_content and len(pdf_content) > 5000:
-                                _logger.info('SUCCESS: Bound report ID %d generated legal PDF (%d bytes)', 
-                                           report.id, len(pdf_content))
-                                return pdf_content
-                            else:
-                                _logger.debug('Bound report ID %d generated small PDF (%d bytes)', 
-                                            report.id, len(pdf_content) if pdf_content else 0)
-                                
-                    except Exception as e:
-                        _logger.debug('Bound report ID %d failed: %s', report.id, str(e))
-                        continue
-                        
-            except Exception as e:
-                _logger.warning('Bound reports search failed: %s', str(e))
-            
-            # MÉTODO 4: Usar controlador de reportes directamente (como la GUI)
-            try:
-                _logger.info('Trying report controller approach')
-                
-                # FILESTORE-SAFE: La GUI usa el controlador de reportes
-                IrActionsReport = self.env['ir.actions.report']
-                
-                # Buscar reportes activos para facturas sin filtros problemáticos
-                active_reports = IrActionsReport.search([
+                # FILESTORE-SAFE: Buscar reportes activos sin filtros que causen el error [6]
+                active_reports = self.env['ir.actions.report'].search([
                     ('model', '=', 'account.move'),
                     ('report_type', '=', 'qweb-pdf')
-                ], limit=10)  # Limitar para evitar muchos intentos
+                ], order='id desc', limit=10)  # Los más recientes primero
                 
-                _logger.info('Found %d active reports', len(active_reports))
+                _logger.info('Found %d active reports for account.move', len(active_reports))
                 
                 for report in active_reports:
                     try:
-                        _logger.info('Trying active report ID: %d', report.id)
+                        _logger.info('Trying active report ID: %d (%s)', report.id, report.name or 'No name')
                         
-                        # FILESTORE-SAFE: Generar PDF
+                        # FILESTORE-SAFE: Generar PDF directamente
                         result = report._render_qweb_pdf(self.ids)
                         
                         if isinstance(result, tuple) and len(result) >= 1:
@@ -391,9 +441,9 @@ class AccountMove(models.Model):
                         continue
                         
             except Exception as e:
-                _logger.warning('Report controller approach failed: %s', str(e))
+                _logger.warning('Active reports search failed: %s', str(e))
             
-            # MÉTODO 5: Fallback HTML temporal (FILESTORE-SAFE)
+            # MÉTODO 6: Fallback HTML temporal (FILESTORE-SAFE)
             try:
                 _logger.warning('All legal PDF methods failed, using HTML fallback (FILESTORE-SAFE)')
                 
@@ -412,18 +462,12 @@ class AccountMove(models.Model):
             # FALLO TOTAL con información específica del problema
             error_msg = (
                 'CRÍTICO: No se pudo generar PDF para factura %s.\n\n'
-                'DIAGNOSIS:\n'
-                '• Los reportes legales SÍ funcionan desde la GUI\n'
-                '• El problema es acceso programático a reportes\n'
-                '• Posibles datos corruptos en campos de reportes\n\n'
-                'EVIDENCIA:\n'
-                '• GUI genera QR con datos AFIP correctos\n'
-                '• Report ID 215 funciona desde interfaz\n'
-                '• wkhtmltopdf está disponible\n\n'
-                'SOLUCIÓN REQUERIDA:\n'
-                '• Verificar permisos de reportes\n'
-                '• Reparar datos de reportes en BD\n'
-                '• Contactar administrador del sistema'
+                'Ningún reporte de ir.actions.report funcionó.\n'
+                'Esto indica un problema con:\n'
+                '• Configuración de reportes en el sistema\n'
+                '• Permisos de generación de PDF\n'
+                '• Módulos de localización\n\n'
+                'CONTACTE AL ADMINISTRADOR DEL SISTEMA.'
             ) % self.name
             
             _logger.error(error_msg)
@@ -634,3 +678,38 @@ class AccountMove(models.Model):
         finally:
             # FILESTORE-SAFE: Limpieza final
             gc.collect()
+
+    def test_report_generation(self):
+        """
+        MÉTODO DE PRUEBA - Test de generación de reportes sin subir a ML
+        Ejecutar desde consola: invoice.test_report_generation()
+        """
+        self.ensure_one()
+        
+        try:
+            _logger.info('=== TESTING REPORT GENERATION FOR %s ===', self.name)
+            
+            # Test de generación de PDF
+            pdf_content = self._generate_pdf_adhoc_priority()
+            
+            result = {
+                'success': True,
+                'invoice': self.name,
+                'pdf_size_bytes': len(pdf_content),
+                'pdf_size_kb': round(len(pdf_content) / 1024, 2),
+                'message': 'PDF generated successfully'
+            }
+            
+            _logger.info('TEST SUCCESS: %s', result)
+            return result
+            
+        except Exception as e:
+            result = {
+                'success': False,
+                'invoice': self.name,
+                'error': str(e),
+                'message': 'PDF generation failed'
+            }
+            
+            _logger.error('TEST FAILED: %s', result)
+            return result
