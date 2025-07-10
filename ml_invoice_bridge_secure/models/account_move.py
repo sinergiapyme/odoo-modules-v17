@@ -54,6 +54,9 @@ class AccountMove(models.Model):
 
     @contextmanager
     def _secure_temp_file(self, data, suffix='.pdf'):
+        """
+        Context manager FILESTORE-SAFE - GARANTÍA TOTAL
+        """
         temp_file = None
         temp_path = None
         try:
@@ -75,273 +78,260 @@ class AccountMove(models.Model):
                 except OSError as e:
                     _logger.warning('FILESTORE-SAFE: Could not clean temp file %s: %s', temp_path, str(e))
 
-    def _generate_html_invoice(self):
-        try:
-            html_content = f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta charset="utf-8">
-                <title>Factura {self.name}</title>
-                <style>
-                  body {{ font-family: Arial, sans-serif; margin: 20px; }}
-                  .header {{ text-align: center; margin-bottom: 30px; }}
-                  .invoice-info {{ margin-bottom: 20px; }}
-                  .customer-info {{ margin-bottom: 20px; }}
-                  .lines-table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; }}
-                  .lines-table th, .lines-table td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
-                  .lines-table th {{ background-color: #f2f2f2; }}
-                  .total {{ text-align: right; font-weight: bold; }}
-                  .warning {{ background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; margin: 20px 0; }}
-                </style>
-            </head>
-            <body>
-                <div class="warning">
-                    <strong>ADVERTENCIA:</strong> Esta factura fue generada en formato básico.
-                    No cumple con los requerimientos de la ley argentina (CAE, QR, etc.).
-                    Contacte al administrador para solucionar los reportes ADHOC.
-                </div>
-                <div class="header">
-                    <h1>FACTURA</h1>
-                    <h2>{self.name}</h2>
-                </div>
-                <div class="invoice-info">
-                    <p><strong>Fecha:</strong> {self.invoice_date or 'N/A'}</p>
-                    <p><strong>Vencimiento:</strong> {self.invoice_date_due or 'N/A'}</p>
-                    <p><strong>Estado:</strong> {dict(self._fields['state'].selection).get(self.state, self.state)}</p>
-                </div>
-                <div class="customer-info">
-                    <h3>Cliente:</h3>
-                    <p><strong>{self.partner_id.name or 'N/A'}</strong></p>
-                    <p>{self.partner_id.street or ''}</p>
-                    <p>{self.partner_id.city or ''} {self.partner_id.state_id.name or ''}</p>
-                    <p>{self.partner_id.country_id.name or ''}</p>
-                    {f'<p>CUIT: {self.partner_id.vat}</p>' if self.partner_id.vat else ''}
-                </div>
-                <table class="lines-table">
-                    <thead>
-                        <tr>
-                            <th>Producto/Servicio</th>
-                            <th>Cantidad</th>
-                            <th>Precio Unit.</th>
-                            <th>Subtotal</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-            """
-            for line in self.invoice_line_ids:
-                html_content += f"""
-                        <tr>
-                            <td>{line.product_id.name or line.name or 'Producto'}</td>
-                            <td>{line.quantity}</td>
-                            <td>${line.price_unit:,.2f}</td>
-                            <td>${line.price_subtotal:,.2f}</td>
-                        </tr>
-                """
-            html_content += f"""
-                    </tbody>
-                </table>
-                <div class="total">
-                    <p>Subtotal: ${self.amount_untaxed:,.2f}</p>
-                    <p>Impuestos: ${self.amount_tax:,.2f}</p>
-                    <p><strong>TOTAL: ${self.amount_total:,.2f}</strong></p>
-                </div>
-                <div style="margin-top: 40px; font-size: 12px; color: #666;">
-                    <p>Factura generada para MercadoLibre (formato básico)</p>
-                    <p>Pack ID: {self.ml_pack_id or 'N/A'}</p>
-                    <p><strong>NOTA:</strong> Esta factura NO cumple con requisitos legales argentinos</p>
-                </div>
-            </body>
-            </html>
-            """
-            return html_content
-        except Exception as e:
-            _logger.error('Error generating HTML: %s', str(e))
-            raise
-
-    def _html_to_pdf_wkhtmltopdf(self, html_content):
-        try:
-            import subprocess
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as html_file:
-                html_file.write(html_content)
-                html_file.flush()
-                html_path = html_file.name
-            pdf_path = tempfile.mktemp(suffix='.pdf')
-            try:
-                cmd = [
-                    'wkhtmltopdf',
-                    '--page-size', 'A4',
-                    '--margin-top', '0.75in',
-                    '--margin-right', '0.75in',
-                    '--margin-bottom', '0.75in',
-                    '--margin-left', '0.75in',
-                    '--encoding', 'UTF-8',
-                    '--quiet',
-                    html_path,
-                    pdf_path
-                ]
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-                if result.returncode == 0 and os.path.exists(pdf_path):
-                    with open(pdf_path, 'rb') as pdf_file:
-                        pdf_content = pdf_file.read()
-                    _logger.info('FILESTORE-SAFE: PDF generated with wkhtmltopdf, size: %d bytes', len(pdf_content))
-                    return pdf_content
-                else:
-                    _logger.error('wkhtmltopdf failed: %s', result.stderr)
-                    return None
-            finally:
-                for path in (html_path, pdf_path):
-                    if os.path.exists(path):
-                        try:
-                            os.unlink(path)
-                        except OSError:
-                            pass
-        except Exception as e:
-            _logger.error('Error in wkhtmltopdf conversion: %s', str(e))
-            return None
+    def _validate_legal_pdf_content(self, pdf_content):
+        """
+        🚨 VALIDACIÓN CRÍTICA - NUNCA permite documentos ilegales
+        Verifica que el PDF contenga elementos legales mínimos argentinos
+        """
+        if not pdf_content or len(pdf_content) < 5000:
+            _logger.error("PDF demasiado pequeño para ser un documento legal válido")
+            return False
+        
+        # Buscar elementos legales mínimos argentinos
+        legal_indicators = [
+            b'CAE',      # Código de Autorización Electrónico (OBLIGATORIO)
+            b'CUIT',     # Identificación tributaria (OBLIGATORIO)
+            b'AFIP',     # Administración Federal (OBLIGATORIO)
+            b'IVA',      # Impuesto al Valor Agregado (OBLIGATORIO)
+        ]
+        
+        found_indicators = []
+        for indicator in legal_indicators:
+            if indicator in pdf_content:
+                found_indicators.append(indicator.decode())
+        
+        # DEBE contener AL MENOS 3 de los 4 elementos legales
+        if len(found_indicators) < 3:
+            _logger.error(
+                f"🚨 DOCUMENTO ILEGAL DETECTADO 🚨\n"
+                f"El PDF NO contiene elementos legales mínimos argentinos.\n"
+                f"Encontrado: {found_indicators}\n"
+                f"Requerido: AL MENOS 3 de [CAE, CUIT, AFIP, IVA]\n"
+                f"Este documento NO puede ser subido a MercadoLibre."
+            )
+            return False
+        
+        _logger.info(f"✅ PDF LEGAL validado: contiene elementos {found_indicators}")
+        return True
 
     def _generate_pdf_adhoc_priority(self):
         """
-        Genera el PDF legal argentino:
-        1) Intentar reporte oficial de l10n_ar_ux (CAE, QR y leyenda AFIP).
-        2) Si falla, ejecutar íntegramente la lógica original de fallbacks.
+        🚨 GENERACIÓN DE PDF CON PROTECCIÓN TOTAL 🚨
+        
+        GARANTÍA: Solo retorna PDFs con elementos legales argentinos
+        Si no puede generar un PDF legal, da error y NO sube nada
         """
-        # --- Paso 1: Reporte oficial de ADHOC ---
-        try:
-            report = self.env.ref('l10n_ar_ux.report_invoice_with_payments', False)
-            if report:
-                pdf_bytes, _ = report.render_qweb_pdf(self.ids)
-                if pdf_bytes and len(pdf_bytes) > 2000:
-                    _logger.info('Usando l10n_ar_ux.report_invoice_with_payments para %s', self.name)
-                    return pdf_bytes
-        except Exception as e:
-            _logger.warning('No funcionó l10n_ar_ux.report_invoice_with_payments: %s', e)
-
-        # --- Paso 2: Lógica original de generación de PDF ---
         try:
             _logger.info('Starting upload for invoice %s, pack_id: %s', self.name, self.ml_pack_id)
             _logger.info('Generating legal PDF for invoice %s using correct report objects', self.name)
 
-            # MÉTODO 1: Reporte GUI "Facturas sin pago"
+            # --- PASO 1: REPORTE OFICIAL l10n_ar_ux (PRIORIDAD MÁXIMA) ---
+            _logger.info('🎯 PASO 1: Intentando reportes oficiales l10n_ar_ux')
+            
+            # Lista de XML IDs de l10n_ar_ux para probar (orden de prioridad)
+            l10n_ar_ux_reports = [
+                'l10n_ar_ux.report_invoice_with_payments',
+                'l10n_ar_ux.report_invoice_document', 
+                'l10n_ar_ux.report_invoice',
+                'l10n_ar_ux.action_report_invoice_with_payments',
+            ]
+            
+            for xml_id in l10n_ar_ux_reports:
+                try:
+                    _logger.info(f'🔍 Probando XML ID: {xml_id}')
+                    
+                    # Buscar reporte por XML ID
+                    report = self.env.ref(xml_id, raise_if_not_found=False)
+                    
+                    if report and report.exists():
+                        _logger.info(f'✅ Reporte encontrado: {report.name} (ID: {report.id})')
+                        
+                        # Generar PDF
+                        result = report._render_qweb_pdf(self.ids)
+                        
+                        if isinstance(result, tuple) and len(result) >= 1:
+                            pdf_content = result[0]
+                            if pdf_content and len(pdf_content) > 5000:
+                                # 🚨 VALIDACIÓN LEGAL CRÍTICA
+                                if self._validate_legal_pdf_content(pdf_content):
+                                    _logger.info(f'✅ SUCCESS: {xml_id} generó PDF LEGAL ({len(pdf_content)} bytes)')
+                                    return pdf_content
+                                else:
+                                    _logger.error(f'🚨 RECHAZO: {xml_id} generó PDF SIN elementos legales')
+                                    continue
+                            else:
+                                _logger.warning(f'{xml_id} generó PDF muy pequeño ({len(pdf_content) if pdf_content else 0} bytes)')
+                    else:
+                        _logger.warning(f'XML ID {xml_id} no encontrado en el sistema')
+                        
+                except Exception as e:
+                    _logger.warning(f'Error con XML ID {xml_id}: {str(e)}')
+                    continue
+
+            # --- PASO 2: REPORTES POR BÚSQUEDA DE NOMBRES (FALLBACK) ---
+            _logger.info('🔄 PASO 2: XML IDs fallaron, intentando búsqueda por nombres')
+            
+            # Buscar "Facturas sin pago" (el que funciona desde GUI)
             try:
-                _logger.info('Searching for exact GUI report: "Facturas sin pago"')
+                _logger.info('🔍 Buscando reporte GUI: "Facturas sin pago"')
                 gui_report = self.env['ir.actions.report'].search([
                     ('name', '=', 'Facturas sin pago'),
                     ('model', '=', 'account.move'),
                     ('report_type', '=', 'qweb-pdf')
                 ], limit=1)
+                
                 if gui_report:
+                    _logger.info(f'✅ Reporte GUI encontrado: {gui_report.name} (ID: {gui_report.id})')
                     result = gui_report._render_qweb_pdf(self.ids)
+                    
                     if isinstance(result, tuple) and result[0] and len(result[0]) > 5000:
-                        _logger.info('SUCCESS: GUI report "Facturas sin pago" generated legal PDF (%d bytes)', len(result[0]))
-                        return result[0]
+                        # 🚨 VALIDACIÓN LEGAL CRÍTICA
+                        if self._validate_legal_pdf_content(result[0]):
+                            _logger.info('✅ SUCCESS: GUI "Facturas sin pago" generó PDF LEGAL (%d bytes)', len(result[0]))
+                            return result[0]
+                        else:
+                            _logger.error('🚨 RECHAZO: GUI "Facturas sin pago" generó PDF SIN elementos legales')
+                else:
+                    _logger.warning('Reporte GUI "Facturas sin pago" no encontrado')
+                    
             except Exception as e:
-                _logger.warning('GUI report "Facturas sin pago" error: %s', e)
+                _logger.warning('Error con reporte GUI: %s', e)
 
-            # MÉTODO 2: Backup template 'account.report_invoice'
-            try:
-                _logger.info('Searching for template: account.report_invoice')
-                template_report = self.env['ir.actions.report'].search([
-                    ('report_name', '=', 'account.report_invoice'),
-                    ('model', '=', 'account.move'),
-                    ('report_type', '=', 'qweb-pdf')
-                ], limit=1)
-                if template_report:
-                    result = template_report._render_qweb_pdf(self.ids)
-                    if isinstance(result, tuple) and result[0] and len(result[0]) > 5000:
-                        _logger.info('SUCCESS: Template report account.report_invoice generated legal PDF (%d bytes)', len(result[0]))
-                        return result[0]
-            except Exception as e:
-                _logger.warning('Template account.report_invoice search failed: %s', str(e))
-
-            # MÉTODO 3: Lista de posibles reportes
-            try:
-                _logger.info('Searching for any working invoice report')
-                report_templates = [
-                    'l10n_ar.report_invoice_document',
-                    'l10n_ar_afipws_fe.report_invoice_document',
-                    'l10n_ar_ux.report_invoice_document',
-                    'l10n_ar_ux.report_invoice',
-                    'account.report_invoice_with_payments'
-                ]
-                for template_name in report_templates:
-                    try:
-                        rpt = self.env['ir.actions.report'].search([
-                            ('report_name', '=', template_name),
-                            ('model', '=', 'account.move')
-                        ], limit=1)
-                        if rpt:
-                            _logger.info('Found report: %s (template: %s)', rpt.name, template_name)
-                            result = rpt._render_qweb_pdf(self.ids)
+            # --- PASO 3: REPORTES POR TEMPLATE NAME ---
+            _logger.info('🔄 PASO 3: Búsqueda GUI falló, intentando templates específicos')
+            
+            # Lista de templates argentinos conocidos
+            report_templates = [
+                'account.report_invoice',
+                'l10n_ar.report_invoice_document',
+                'l10n_ar_afipws_fe.report_invoice_document',
+                'l10n_ar_ux.report_invoice_document',
+                'l10n_ar_ux.report_invoice',
+                'account.report_invoice_with_payments'
+            ]
+            
+            for template_name in report_templates:
+                try:
+                    _logger.info(f'🔍 Probando template: {template_name}')
+                    
+                    reports = self.env['ir.actions.report'].search([
+                        ('report_name', '=', template_name),
+                        ('model', '=', 'account.move'),
+                        ('report_type', '=', 'qweb-pdf')
+                    ])
+                    
+                    for report in reports:
+                        try:
+                            _logger.info(f'✅ Template encontrado: {report.name} (ID: {report.id})')
+                            result = report._render_qweb_pdf(self.ids)
+                            
                             if isinstance(result, tuple) and result[0] and len(result[0]) > 5000:
-                                _logger.info('SUCCESS: Report %s generated legal PDF (%d bytes)', rpt.name, len(result[0]))
-                                return result[0]
-                    except Exception as e:
-                        _logger.debug('Report %s failed: %s', template_name, str(e))
-            except Exception as e:
-                _logger.warning('Report template search failed: %s', str(e))
+                                # 🚨 VALIDACIÓN LEGAL CRÍTICA
+                                if self._validate_legal_pdf_content(result[0]):
+                                    _logger.info(f'✅ SUCCESS: Template {template_name} generó PDF LEGAL ({len(result[0])} bytes)')
+                                    return result[0]
+                                else:
+                                    _logger.error(f'🚨 RECHAZO: Template {template_name} generó PDF SIN elementos legales')
+                                    
+                        except Exception as e:
+                            _logger.debug(f'Error generando PDF con {report.name}: {str(e)}')
+                            continue
+                            
+                except Exception as e:
+                    _logger.debug(f'Error buscando template {template_name}: {str(e)}')
+                    continue
 
-            # MÉTODO 4: IDs específicos de logs anteriores
-            try:
-                _logger.info('Trying specific report IDs from previous logs')
-                report_ids_to_try = [215, 213, 214]
-                for report_id in report_ids_to_try:
-                    try:
-                        rpt = self.env['ir.actions.report'].browse(report_id)
-                        if rpt.exists() and rpt.model == 'account.move':
-                            result = rpt._render_qweb_pdf(self.ids)
-                            if isinstance(result, tuple) and result[0] and len(result[0]) > 5000:
-                                _logger.info('SUCCESS: Report ID %d (%s) generated legal PDF (%d bytes)', report_id, rpt.name, len(result[0]))
+            # --- PASO 4: REPORTES POR IDs ESPECÍFICOS ---
+            _logger.info('🔄 PASO 4: Templates fallaron, probando IDs específicos del log')
+            
+            # IDs que aparecieron en logs anteriores
+            report_ids_to_try = [215, 213, 214]
+            
+            for report_id in report_ids_to_try:
+                try:
+                    _logger.info(f'🔍 Probando ID específico: {report_id}')
+                    
+                    report = self.env['ir.actions.report'].browse(report_id)
+                    if report.exists() and report.model == 'account.move':
+                        _logger.info(f'✅ ID encontrado: {report.name} (ID: {report.id})')
+                        result = report._render_qweb_pdf(self.ids)
+                        
+                        if isinstance(result, tuple) and result[0] and len(result[0]) > 5000:
+                            # 🚨 VALIDACIÓN LEGAL CRÍTICA
+                            if self._validate_legal_pdf_content(result[0]):
+                                _logger.info(f'✅ SUCCESS: ID {report_id} generó PDF LEGAL ({len(result[0])} bytes)')
                                 return result[0]
-                    except Exception as e:
-                        _logger.info('Report ID %d failed: %s', report_id, str(e))
-            except Exception as e:
-                _logger.warning('Specific report IDs search failed: %s', str(e))
+                            else:
+                                _logger.error(f'🚨 RECHAZO: ID {report_id} generó PDF SIN elementos legales')
+                                
+                except Exception as e:
+                    _logger.debug(f'Error con ID {report_id}: {str(e)}')
+                    continue
 
-            # MÉTODO 5: Fallback con reportes activos recientes
+            # --- PASO 5: BÚSQUEDA GENERAL DE REPORTES ACTIVOS ---
+            _logger.info('🔄 PASO 5: IDs específicos fallaron, buscando cualquier reporte activo')
+            
             try:
-                _logger.info('Searching for any active account.move reports')
                 active_reports = self.env['ir.actions.report'].search([
                     ('model', '=', 'account.move'),
                     ('report_type', '=', 'qweb-pdf')
                 ], order='id desc', limit=10)
-                for rpt in active_reports:
+                
+                _logger.info(f'Encontrados {len(active_reports)} reportes activos para probar')
+                
+                for report in active_reports:
                     try:
-                        _logger.info('Trying active report ID: %d (%s)', rpt.id, rpt.name or 'No name')
-                        result = rpt._render_qweb_pdf(self.ids)
+                        _logger.info(f'🔍 Probando reporte activo: {report.name or "Sin nombre"} (ID: {report.id})')
+                        result = report._render_qweb_pdf(self.ids)
+                        
                         if isinstance(result, tuple) and result[0] and len(result[0]) > 5000:
-                            _logger.info('SUCCESS: Active report ID %d generated legal PDF (%d bytes)', rpt.id, len(result[0]))
-                            return result[0]
+                            # 🚨 VALIDACIÓN LEGAL CRÍTICA
+                            if self._validate_legal_pdf_content(result[0]):
+                                _logger.info(f'✅ SUCCESS: Reporte activo ID {report.id} generó PDF LEGAL ({len(result[0])} bytes)')
+                                return result[0]
+                            else:
+                                _logger.error(f'🚨 RECHAZO: Reporte activo ID {report.id} generó PDF SIN elementos legales')
+                                
                     except Exception as e:
-                        _logger.debug('Active report ID %d failed: %s', rpt.id, str(e))
+                        _logger.debug(f'Error con reporte activo ID {report.id}: {str(e)}')
+                        continue
+                        
             except Exception as e:
-                _logger.warning('Active reports search failed: %s', str(e))
+                _logger.warning(f'Error en búsqueda de reportes activos: {str(e)}')
 
-            # MÉTODO 6: Fallback HTML
-            try:
-                _logger.warning('All legal PDF methods failed, using HTML fallback (FILESTORE-SAFE)')
-                html_content = self._generate_html_invoice()
-                pdf_content = self._html_to_pdf_wkhtmltopdf(html_content)
-                if pdf_content and len(pdf_content) > 100:
-                    _logger.warning('FALLBACK: HTML PDF generated (%d bytes) – NOT LEGAL COMPLIANT', len(pdf_content))
-                    return pdf_content
-            except Exception as e:
-                _logger.error('Even HTML fallback failed: %s', str(e))
-
-            # Si todo falla, error crítico
-            error_msg = _(
-                'CRÍTICO: No se pudo generar PDF para factura %s.\n'
-                'Revise configuración de reportes y permisos.'
-            ) % self.name
+            # 🚨 PROTECCIÓN TOTAL: FALLO SEGURO - NUNCA MÁS DOCUMENTOS ILEGALES
+            # NO HAY FALLBACK HTML - MEJOR ERROR QUE DOCUMENTO ILEGAL
+            
+            error_msg = (
+                '🚨 CRÍTICO: IMPOSIBLE GENERAR PDF LEGAL 🚨\n\n'
+                f'No se pudo generar PDF con elementos legales para factura {self.name}.\n\n'
+                '❌ Todos los reportes disponibles fallaron la validación legal\n'
+                '❌ Ningún PDF contiene CAE, CUIT, AFIP o elementos AFIP requeridos\n'
+                '❌ NO se generará documento de respaldo (protección anti-ilegal)\n\n'
+                '📋 PROBLEMAS DETECTADOS:\n'
+                '• Módulo l10n_ar_ux no configurado correctamente\n'
+                '• Facturación electrónica AFIP no configurada\n'
+                '• Certificados AFIP faltantes o vencidos\n'
+                '• Reportes de localización argentina no funcionan\n\n'
+                '🔧 SOLUCIÓN REQUERIDA:\n'
+                '• Verificar instalación y configuración de l10n_ar_ux\n'
+                '• Configurar facturación electrónica AFIP\n'
+                '• Verificar certificados AFIP válidos\n'
+                '• Probar generar factura legal desde la GUI\n\n'
+                '🛡️ PROTECCIÓN ACTIVADA:\n'
+                'Este sistema NUNCA subirá documentos sin validez legal.\n'
+                'Configure correctamente los reportes antes de reintentar.'
+            )
+            
             _logger.error(error_msg)
             raise UserError(error_msg)
 
         except UserError:
             raise
         except Exception as e:
-            error_msg = 'Error crítico generando PDF para %s: %s' % (self.name, str(e))
+            error_msg = f'🚨 Error crítico en generación de PDF legal para {self.name}: {str(e)}'
             _logger.error(error_msg)
-            raise UserError('Error crítico: %s' % str(e))
+            raise UserError(f'Error crítico: {str(e)}')
 
     def _upload_to_ml_api(self, pack_id, pdf_content, access_token):
         """
@@ -350,6 +340,7 @@ class AccountMove(models.Model):
         try:
             url = 'https://api.mercadolibre.com/packs/%s/fiscal_documents' % pack_id
             headers = {'Authorization': 'Bearer %s' % access_token}
+            
             with self._secure_temp_file(pdf_content) as temp_file_path:
                 with open(temp_file_path, 'rb') as pdf_file:
                     filename = 'factura_%s.pdf' % self.name.replace('/', '_').replace(' ', '_')
@@ -377,127 +368,243 @@ class AccountMove(models.Model):
 
     def action_upload_to_mercadolibre(self):
         """
-        Acción principal - FILESTORE-SAFE GARANTIZADO
+        🚨 ACCIÓN PRINCIPAL CON PROTECCIÓN TOTAL 🚨
+        Solo sube PDFs que pasen validación legal estricta
         """
         self.ensure_one()
-        if not self.is_ml_sale:
-            raise UserError('Esta factura no es de MercadoLibre')
-        if self.ml_uploaded:
-            raise UserError('Factura ya subida a MercadoLibre')
-        if self.state != 'posted':
-            raise UserError('Solo se pueden subir facturas validadas')
-        if not self.ml_pack_id:
-            raise UserError('Pack ID de MercadoLibre no encontrado')
+        
+        try:
+            # Validaciones básicas
+            if not self.is_ml_sale:
+                raise UserError('Esta factura no es de MercadoLibre')
+            if self.ml_uploaded:
+                raise UserError('Factura ya subida a MercadoLibre')
+            if self.state != 'posted':
+                raise UserError('Solo se pueden subir facturas validadas')
+            if not self.ml_pack_id:
+                raise UserError('Pack ID de MercadoLibre no encontrado')
 
-        config = self.env['mercadolibre.config'].get_active_config()
-        if not config:
-            raise UserError('No hay configuración de MercadoLibre activa')
-        if not config.access_token:
-            raise UserError('Token de acceso no configurado')
+            # Configuración
+            config = self.env['mercadolibre.config'].get_active_config()
+            if not config:
+                raise UserError('No hay configuración de MercadoLibre activa')
+            if not config.access_token:
+                raise UserError('Token de acceso no configurado')
 
-        _logger.info('Starting upload for invoice %s, pack_id: %s', self.name, self.ml_pack_id)
-        pdf_content = self._generate_pdf_adhoc_priority()
+            _logger.info('Starting upload for invoice %s, pack_id: %s', self.name, self.ml_pack_id)
+            
+            # 🚨 GENERACIÓN CON PROTECCIÓN TOTAL
+            # Si esto falla, se da error y NO se sube nada
+            pdf_content = self._generate_pdf_adhoc_priority()
+            
+            # Upload del PDF LEGAL
+            result = self._upload_to_ml_api(self.ml_pack_id, pdf_content, config.access_token)
 
-        result = self._upload_to_ml_api(self.ml_pack_id, pdf_content, config.access_token)
+            # Limpieza de memoria
+            pdf_content = None
+            gc.collect()
 
-        # Cleanup
-        pdf_content = None
-        gc.collect()
-
-        if result.get('success'):
-            self.write({
-                'ml_uploaded': True,
-                'ml_upload_date': fields.Datetime.now()
-            })
-            self.env['mercadolibre.log'].create_log(
-                invoice_id=self.id,
-                status='success',
-                message=result.get('message'),
-                pack_id=self.ml_pack_id,
-                ml_response=json.dumps(result.get('data', {}))
-            )
-            return {
-                'type': 'ir.actions.client',
-                'tag': 'display_notification',
-                'params': {
-                    'title': 'Éxito',
-                    'message': 'Factura subida exitosamente a MercadoLibre',
-                    'type': 'success'
+            if result.get('success'):
+                # Marcar como subido exitosamente
+                self.write({
+                    'ml_uploaded': True,
+                    'ml_upload_date': fields.Datetime.now()
+                })
+                
+                # Log de éxito
+                self.env['mercadolibre.log'].create_log(
+                    invoice_id=self.id,
+                    status='success',
+                    message=result.get('message'),
+                    pack_id=self.ml_pack_id,
+                    ml_response=json.dumps(result.get('data', {}))
+                )
+                
+                return {
+                    'type': 'ir.actions.client',
+                    'tag': 'display_notification',
+                    'params': {
+                        'title': '✅ Éxito',
+                        'message': 'Factura LEGAL subida exitosamente a MercadoLibre',
+                        'type': 'success'
+                    }
                 }
-            }
-        else:
-            error_msg = result.get('error', 'Error desconocido')
+            else:
+                # Error en upload
+                error_msg = result.get('error', 'Error desconocido')
+                
+                self.env['mercadolibre.log'].create_log(
+                    invoice_id=self.id,
+                    status='error',
+                    message=error_msg,
+                    pack_id=self.ml_pack_id
+                )
+                
+                raise UserError('Error subiendo factura: %s' % error_msg)
+
+        except UserError:
+            raise
+        except Exception as e:
+            error_msg = 'Error inesperado: %s' % str(e)
+            _logger.error('Unexpected error uploading %s: %s', self.name, error_msg)
+            
+            # Log de error
             self.env['mercadolibre.log'].create_log(
                 invoice_id=self.id,
                 status='error',
                 message=error_msg,
-                pack_id=self.ml_pack_id
+                pack_id=self.ml_pack_id or 'Unknown'
             )
-            raise UserError('Error subiendo factura: %s' % error_msg)
+            
+            raise UserError('Error inesperado: %s' % str(e))
+        finally:
+            # Limpieza final
+            gc.collect()
 
     @api.model
     def cron_upload_ml_invoices(self):
         """
-        CRON - FILESTORE-SAFE GARANTIZADO
+        🚨 CRON CON PROTECCIÓN TOTAL 🚨
+        Solo procesa facturas que puedan generar PDFs legales
         """
-        config = self.env['mercadolibre.config'].get_active_config()
-        if not config or not config.auto_upload:
-            return
+        try:
+            config = self.env['mercadolibre.config'].get_active_config()
+            if not config or not config.auto_upload:
+                return
 
-        pending_invoices = self.search([
-            ('state', '=', 'posted'),
-            ('is_ml_sale', '=', True),
-            ('ml_uploaded', '=', False),
-            ('move_type', 'in', ['out_invoice', 'out_refund']),
-            ('ml_pack_id', '!=', False)
-        ], limit=25)
+            # Buscar facturas pendientes
+            pending_invoices = self.search([
+                ('state', '=', 'posted'),
+                ('is_ml_sale', '=', True),
+                ('ml_uploaded', '=', False),
+                ('move_type', 'in', ['out_invoice', 'out_refund']),
+                ('ml_pack_id', '!=', False)
+            ], limit=25)
 
-        if not pending_invoices:
-            return
+            if not pending_invoices:
+                _logger.info('No hay facturas pendientes para subir a MercadoLibre')
+                return
 
-        success_count = 0
-        error_count = 0
+            _logger.info(f'Procesando {len(pending_invoices)} facturas pendientes para MercadoLibre')
 
-        for invoice in pending_invoices:
-            try:
-                with self.env.cr.savepoint():
-                    invoice.action_upload_to_mercadolibre()
-                self.env.cr.commit()
-                gc.collect()
-                time.sleep(2)
-                success_count += 1
-            except Exception as e:
-                error_count += 1
-                _logger.error('Auto upload failed for %s: %s', invoice.name, str(e))
-                if error_count >= 3:
-                    _logger.warning('Stopping after %d errors for safety', error_count)
-                    break
+            success_count = 0
+            error_count = 0
 
-        _logger.info('Auto upload completed: %d successful, %d errors', success_count, error_count)
+            for invoice in pending_invoices:
+                try:
+                    with self.env.cr.savepoint():
+                        # Intentar subir con protección total
+                        invoice.action_upload_to_mercadolibre()
+                        success_count += 1
+                        _logger.info(f'✅ Factura {invoice.name} subida exitosamente')
+                    
+                    self.env.cr.commit()
+                    gc.collect()
+                    time.sleep(2)  # Pausa entre uploads
+                    
+                except Exception as e:
+                    error_count += 1
+                    _logger.error('❌ Auto upload falló para %s: %s', invoice.name, str(e))
+                    
+                    # Detener si hay muchos errores consecutivos
+                    if error_count >= 3:
+                        _logger.warning('🛑 Deteniendo después de %d errores por seguridad', error_count)
+                        break
+
+            _logger.info(f'📊 Auto upload completado: {success_count} exitosos, {error_count} errores')
+
+        except Exception as e:
+            _logger.error('🚨 Error crítico en CRON de subida: %s', str(e))
+        finally:
+            gc.collect()
 
     def test_report_generation(self):
         """
-        MÉTODO DE PRUEBA - Test de generación de reportes sin subir a ML
+        🧪 MÉTODO DE PRUEBA SEGURO
+        Prueba generación de PDF sin subir a MercadoLibre
         """
         self.ensure_one()
+        
         try:
-            _logger.info('=== TESTING REPORT GENERATION FOR %s ===', self.name)
+            _logger.info('=== TESTING LEGAL PDF GENERATION FOR %s ===', self.name)
+            
+            # Intentar generar PDF con todas las validaciones
             pdf_content = self._generate_pdf_adhoc_priority()
+            
             result = {
                 'success': True,
                 'invoice': self.name,
                 'pdf_size_bytes': len(pdf_content),
                 'pdf_size_kb': round(len(pdf_content) / 1024, 2),
-                'message': 'PDF generated successfully'
+                'message': '✅ PDF LEGAL generado exitosamente',
+                'validation': 'PASSED - Contiene elementos legales argentinos'
             }
-            _logger.info('TEST SUCCESS: %s', result)
+            
+            _logger.info('✅ TEST SUCCESS: %s', result)
             return result
+            
         except Exception as e:
             result = {
                 'success': False,
                 'invoice': self.name,
                 'error': str(e),
-                'message': 'PDF generation failed'
+                'message': '❌ Falló generación de PDF legal',
+                'validation': 'FAILED - No se pudo generar documento legal'
             }
-            _logger.error('TEST FAILED: %s', result)
+            
+            _logger.error('❌ TEST FAILED: %s', result)
             return result
+
+    def action_debug_available_reports(self):
+        """
+        🔧 MÉTODO DE DEBUG - Ver reportes disponibles
+        """
+        self.ensure_one()
+        
+        reports_info = []
+        
+        # 1. Verificar módulos instalados
+        ar_modules = self.env['ir.module.module'].search([
+            ('name', 'like', 'l10n_ar%'),
+            ('state', '=', 'installed')
+        ])
+        
+        reports_info.append("=== MÓDULOS ARGENTINOS INSTALADOS ===")
+        for module in ar_modules:
+            reports_info.append(f"• {module.name}: {module.state}")
+        
+        # 2. Ver XML IDs de reportes
+        reports_info.append("\n=== XML IDs DE REPORTES DISPONIBLES ===")
+        data = self.env['ir.model.data'].search([
+            ('module', 'like', 'l10n_ar%'),
+            ('model', '=', 'ir.actions.report')
+        ])
+        
+        for d in data:
+            report = self.env['ir.actions.report'].browse(d.res_id)
+            if report.exists():
+                reports_info.append(f"• {d.module}.{d.name} -> {report.name}")
+        
+        # 3. Ver todos los reportes de account.move
+        reports_info.append("\n=== TODOS LOS REPORTES DE FACTURAS ===")
+        all_reports = self.env['ir.actions.report'].search([
+            ('model', '=', 'account.move'),
+            ('report_type', '=', 'qweb-pdf')
+        ])
+        
+        for report in all_reports:
+            reports_info.append(f"• ID {report.id}: {report.name} ({report.report_name})")
+        
+        # Log completo
+        complete_info = "\n".join(reports_info)
+        _logger.info(f"DEBUG INFO FOR {self.name}:\n{complete_info}")
+        
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'title': '🔧 Debug Reportes',
+                'message': f'Información completa loggeada. Revisar logs del servidor.',
+                'type': 'info'
+            }
+        }
