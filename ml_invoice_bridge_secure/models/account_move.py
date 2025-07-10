@@ -219,20 +219,24 @@ class AccountMove(models.Model):
 
     def _generate_pdf_adhoc_priority(self):
         """
-        VERSIÓN EXACTA - Usa el reporte confirmado que funciona desde GUI
-        PLANTILLA: account.report_invoice (confirmado en GUI)
-        GARANTIZADO: Mismo PDF que "Facturas sin pago" en GUI
+        VERSIÓN CORREGIDA - Busca reportes por ir.actions.report, no por ref
+        FUNCIONA: Usa objetos de reporte correctos que tienen _render_qweb_pdf
         """
         try:
-            _logger.info('Generating legal PDF for invoice %s using confirmed template', self.name)
+            _logger.info('Generating legal PDF for invoice %s using correct report objects', self.name)
             
-            # MÉTODO 1: Usar exactamente el reporte "Facturas sin pago" (CONFIRMADO)
+            # MÉTODO 1: Buscar reportes por nombre de plantilla (CORREGIDO)
             try:
-                # Esta es la plantilla exacta confirmada: account.report_invoice
-                report = self.env.ref('account.report_invoice', raise_if_not_found=False)
+                # Buscar reporte "Facturas sin pago" por nombre de plantilla
+                reports = self.env['ir.actions.report'].search([
+                    ('model', '=', 'account.move'),
+                    ('report_type', '=', 'qweb-pdf'),
+                    ('report_name', '=', 'account.report_invoice')  # Template exacta
+                ], limit=1)
                 
-                if report:
-                    _logger.info('Using confirmed legal report: account.report_invoice')
+                if reports:
+                    report = reports[0]
+                    _logger.info('Using confirmed legal report: account.report_invoice (ID: %d)', report.id)
                     result = report._render_qweb_pdf(self.ids)
                     
                     if isinstance(result, tuple) and len(result) >= 1:
@@ -243,14 +247,19 @@ class AccountMove(models.Model):
                             return pdf_content
                 
             except Exception as e:
-                _logger.warning('Primary report account.report_invoice failed: %s', str(e))
+                _logger.warning('Template account.report_invoice search failed: %s', str(e))
             
-            # MÉTODO 2: Backup - Reporte "Facturas" (también confirmado que funciona)
+            # MÉTODO 2: Buscar reporte "Facturas" por nombre de plantilla (BACKUP)
             try:
-                report = self.env.ref('account.report_invoice_with_payments', raise_if_not_found=False)
+                reports = self.env['ir.actions.report'].search([
+                    ('model', '=', 'account.move'),
+                    ('report_type', '=', 'qweb-pdf'),
+                    ('report_name', '=', 'account.report_invoice_with_payments')
+                ], limit=1)
                 
-                if report:
-                    _logger.info('Using backup legal report: account.report_invoice_with_payments')
+                if reports:
+                    report = reports[0]
+                    _logger.info('Using backup legal report: account.report_invoice_with_payments (ID: %d)', report.id)
                     result = report._render_qweb_pdf(self.ids)
                     
                     if isinstance(result, tuple) and len(result) >= 1:
@@ -261,47 +270,85 @@ class AccountMove(models.Model):
                             return pdf_content
                             
             except Exception as e:
-                _logger.warning('Backup report failed: %s', str(e))
+                _logger.warning('Template account.report_invoice_with_payments search failed: %s', str(e))
             
-            # MÉTODO 3: Intentar reportes l10n_ar específicos (ya tienes instalados)
+            # MÉTODO 3: Buscar reportes Argentina por nombre de plantilla
             try:
-                # Basado en las vistas que me mostraste
-                ar_report_refs = [
-                    'l10n_ar_ux.report_invoice',           # Vista de l10n_ar_ux
-                    'l10n_ar.report_invoice',              # Vista base l10n_ar  
-                    'l10n_ar_afipws_fe.report_invoice',    # Vista AFIP WebService
+                ar_template_names = [
+                    'l10n_ar_ux.report_invoice',
+                    'l10n_ar.report_invoice', 
+                    'l10n_ar_afipws_fe.report_invoice_document',
                 ]
                 
-                for report_ref in ar_report_refs:
+                for template_name in ar_template_names:
                     try:
-                        report = self.env.ref(report_ref, raise_if_not_found=False)
-                        if report:
-                            _logger.info('Trying Argentina specific report: %s', report_ref)
+                        reports = self.env['ir.actions.report'].search([
+                            ('model', '=', 'account.move'),
+                            ('report_type', '=', 'qweb-pdf'),
+                            ('report_name', '=', template_name)
+                        ], limit=1)
+                        
+                        if reports:
+                            report = reports[0]
+                            _logger.info('Trying Argentina report: %s (ID: %d)', template_name, report.id)
                             result = report._render_qweb_pdf(self.ids)
                             
                             if isinstance(result, tuple) and len(result) >= 1:
                                 pdf_content = result[0]
                                 if pdf_content and len(pdf_content) > 5000:
                                     _logger.info('SUCCESS: Argentina PDF (%d bytes) with: %s', 
-                                               len(pdf_content), report_ref)
+                                               len(pdf_content), template_name)
                                     return pdf_content
                                     
                     except Exception as e:
-                        _logger.info('Argentina report %s failed: %s', report_ref, str(e))
+                        _logger.info('Argentina template %s failed: %s', template_name, str(e))
                         continue
                         
             except Exception as e:
-                _logger.warning('Argentina reports search failed: %s', str(e))
+                _logger.warning('Argentina templates search failed: %s', str(e))
+            
+            # MÉTODO 4: Buscar CUALQUIER reporte que funcione para account.move
+            try:
+                _logger.info('Searching for any working invoice report')
+                
+                all_reports = self.env['ir.actions.report'].search([
+                    ('model', '=', 'account.move'),
+                    ('report_type', '=', 'qweb-pdf')
+                ])
+                
+                _logger.info('Found %d total invoice reports to try', len(all_reports))
+                
+                for report in all_reports:
+                    try:
+                        _logger.info('Trying report ID: %d, template: %s', report.id, report.report_name)
+                        
+                        result = report._render_qweb_pdf(self.ids)
+                        if isinstance(result, tuple) and len(result) >= 1:
+                            pdf_content = result[0]
+                            if pdf_content and len(pdf_content) > 3000:  # Menos restrictivo
+                                _logger.info('SUCCESS: Working PDF found (%d bytes) with report ID: %d', 
+                                           len(pdf_content), report.id)
+                                return pdf_content
+                            else:
+                                _logger.debug('Report %d generated small PDF (%d bytes)', 
+                                            report.id, len(pdf_content) if pdf_content else 0)
+                                
+                    except Exception as e:
+                        _logger.debug('Report %d failed: %s', report.id, str(e))
+                        continue
+                        
+            except Exception as e:
+                _logger.error('Automatic report search failed: %s', str(e))
             
             # FALLO TOTAL - Error con información específica
             error_msg = (
-                'CRÍTICO: No se pudo generar PDF legal para factura %s.\n\n'
-                'Se intentaron estos reportes:\n'
-                '• account.report_invoice (Facturas sin pago)\n'
-                '• account.report_invoice_with_payments (Facturas)\n'
-                '• Reportes l10n_ar específicos\n\n'
-                'TODOS fallaron. Contacte al administrador.\n'
-                'La factura NO se puede subir a MercadoLibre sin PDF legal.'
+                'CRÍTICO: No se pudo generar PDF para factura %s.\n\n'
+                'Ningún reporte de ir.actions.report funcionó.\n'
+                'Esto indica un problema con:\n'
+                '• Configuración de reportes en el sistema\n'
+                '• Permisos de generación de PDF\n'
+                '• Módulos de localización\n\n'
+                'CONTACTE AL ADMINISTRADOR DEL SISTEMA.'
             ) % self.name
             
             _logger.error(error_msg)
@@ -310,7 +357,7 @@ class AccountMove(models.Model):
         except UserError:
             raise
         except Exception as e:
-            error_msg = 'Error crítico generando PDF legal para %s: %s' % (self.name, str(e))
+            error_msg = 'Error crítico generando PDF para %s: %s' % (self.name, str(e))
             _logger.error(error_msg)
             raise UserError('Error crítico: %s' % str(e))
 
