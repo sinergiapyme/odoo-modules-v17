@@ -67,7 +67,6 @@ class MercadoLibreLog(models.Model):
         if self.invoice_id.state != 'posted':
             raise UserError(_('Solo se pueden subir facturas validadas'))
         
-        # CORREGIDO: usar campos que existen
         if not self.invoice_id.is_ml_sale:
             raise UserError(_('Esta factura no es de MercadoLibre'))
         
@@ -75,31 +74,22 @@ class MercadoLibreLog(models.Model):
             raise UserError(_('Esta factura ya está marcada como subida'))
         
         try:
-            # CORREGIDO: llamar al método que existe
             result = self.invoice_id.action_upload_to_ml()
             
-            # Si llegamos aquí, el upload fue exitoso
-            # El método action_upload_to_ml ya crea su propio log de éxito
-            
-            # Actualizar status del log actual para marcarlo como "retry successful"
             self.write({
                 'status': 'success',
                 'message': _('Retry successful: %s') % (result.get('params', {}).get('message', 'Upload completed'))
             })
             
-            # Retornar el mismo resultado que el upload original
             return result
             
         except UserError as e:
-            # Error controlado - actualizamos el log actual
             self.write({
                 'message': _('Retry failed: %s') % str(e)
             })
-            # Re-lanzar el error para que se muestre al usuario
             raise
             
         except Exception as e:
-            # Error inesperado - actualizamos el log actual  
             error_msg = _('Retry failed with unexpected error: %s') % str(e)
             self.write({
                 'message': error_msg
@@ -122,7 +112,7 @@ class MercadoLibreLog(models.Model):
                 success_count += 1
             except Exception:
                 error_count += 1
-                continue  # Continuar con el siguiente
+                continue
         
         message = _('Retry completed: %d successful, %d failed') % (success_count, error_count)
         
