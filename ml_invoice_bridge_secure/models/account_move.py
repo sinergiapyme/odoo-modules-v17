@@ -233,13 +233,13 @@ class AccountMove(models.Model):
             return self.env['ir.actions.report'].browse()
 
     def _try_generate_pdf(self, report, strategy_name):
-        """Intentar generar PDF con un reporte específico - REPLICANDO GUI"""
+        """Intentar generar PDF con un reporte específico - CORREGIDO PARA ODOO 17"""
         try:
             _logger.info("TRYING %s: %s (ID: %s)", strategy_name, report.name, report.id)
             
-            # MÉTODO 1: Usar el mismo flujo que la GUI
+            # MÉTODO CORREGIDO PARA ODOO 17: usar self.ids en lugar de [self.id]
             try:
-                pdf_content, _ = report._render_qweb_pdf([self.id])
+                pdf_content, _ = report._render_qweb_pdf(self.ids)
                 
                 if pdf_content and len(pdf_content) > 1000:
                     _logger.info("✅ GUI METHOD: Generated PDF: %d bytes with report %s", len(pdf_content), report.name)
@@ -248,9 +248,11 @@ class AccountMove(models.Model):
             except Exception as gui_error:
                 _logger.warning("GUI method failed for %s: %s", report.name, str(gui_error))
             
-            # MÉTODO 2: Render directo (fallback)
+            # MÉTODO 2: Render directo (fallback) - CORREGIDO
             try:
-                pdf_content, _ = report.render_qweb_pdf([self.id])
+                # NOTA: En Odoo 17, render_qweb_pdf ya no existe como método público
+                # Usar solo _render_qweb_pdf
+                pdf_content, _ = report._render_qweb_pdf(self.ids)
                 
                 if pdf_content and len(pdf_content) > 1000:
                     _logger.info("✅ DIRECT METHOD: Generated PDF: %d bytes with report %s", len(pdf_content), report.name)
@@ -259,17 +261,17 @@ class AccountMove(models.Model):
             except Exception as direct_error:
                 _logger.warning("Direct method failed for %s: %s", report.name, str(direct_error))
             
-            # MÉTODO 3: Con contexto específico
+            # MÉTODO 3: Con contexto específico - CORREGIDO
             try:
                 context = dict(self.env.context)
                 context.update({
                     'report_xml_id': report.id,
                     'active_model': 'account.move',
-                    'active_ids': [self.id],
+                    'active_ids': self.ids,
                     'active_id': self.id,
                 })
                 
-                pdf_content, _ = report.with_context(context)._render_qweb_pdf([self.id])
+                pdf_content, _ = report.with_context(context)._render_qweb_pdf(self.ids)
                 
                 if pdf_content and len(pdf_content) > 1000:
                     _logger.info("✅ CONTEXT METHOD: Generated PDF: %d bytes with report %s", len(pdf_content), report.name)
@@ -428,7 +430,7 @@ class AccountMove(models.Model):
             _logger.error("❌ Upload exception: %s", error_msg)
             return {'success': False, 'error': error_msg}
 
-    # MÉTODOS DE TESTING SIMPLES
+    # MÉTODOS DE TESTING COMPLETOS - PRESERVADOS
     def action_test_pdf_generation(self):
         """Test directo de generación de PDF"""
         self.ensure_one()
@@ -511,9 +513,9 @@ class AccountMove(models.Model):
                     
                     methods_tried = []
                     
-                    # Método 1: _render_qweb_pdf
+                    # Método 1: _render_qweb_pdf - CORREGIDO
                     try:
-                        pdf_content, _ = report._render_qweb_pdf([self.id])
+                        pdf_content, _ = report._render_qweb_pdf(self.ids)
                         if pdf_content and len(pdf_content) > 1000:
                             methods_tried.append(f"_render_qweb_pdf: {len(pdf_content)} bytes ✅")
                             success_count += 1
@@ -521,16 +523,6 @@ class AccountMove(models.Model):
                             methods_tried.append("_render_qweb_pdf: failed ❌")
                     except Exception as e:
                         methods_tried.append(f"_render_qweb_pdf: error {str(e)[:50]} ❌")
-                    
-                    # Método 2: render_qweb_pdf
-                    try:
-                        pdf_content, _ = report.render_qweb_pdf([self.id])
-                        if pdf_content and len(pdf_content) > 1000:
-                            methods_tried.append(f"render_qweb_pdf: {len(pdf_content)} bytes ✅")
-                        else:
-                            methods_tried.append("render_qweb_pdf: failed ❌")
-                    except Exception as e:
-                        methods_tried.append(f"render_qweb_pdf: error {str(e)[:50]} ❌")
                     
                     results.append({
                         'report': report.name,
