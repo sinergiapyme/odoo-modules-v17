@@ -7,7 +7,7 @@
             <form string="MercadoLibre Configuration">
                 <header>
                     <button name="test_api_connection" string="Test Connection" type="object" class="btn-primary"/>
-                    <button name="refresh_access_token" string="Refresh Token" type="object" class="btn-secondary" invisible="refresh_token == False"/>
+                    <button name="refresh_access_token" string="Refresh Token" type="object" class="btn-secondary" invisible="not refresh_token"/>
                 </header>
                 <sheet>
                     <group>
@@ -26,8 +26,8 @@
                     </group>
                     <group string="Estado">
                         <field name="api_status"/>
-                        <field name="last_test" invisible="last_test == False"/>
-                        <field name="last_token_refresh" invisible="last_token_refresh == False"/>
+                        <field name="last_test" invisible="not last_test"/>
+                        <field name="last_token_refresh" invisible="not last_token_refresh"/>
                     </group>
                 </sheet>
             </form>
