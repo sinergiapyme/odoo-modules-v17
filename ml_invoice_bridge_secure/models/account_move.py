@@ -4,8 +4,8 @@ import logging
 import requests
 import base64
 import io
-import hashlib
-from odoo import models, fields, api
+import json
+from odoo import models, fields, api, _
 from odoo.exceptions import UserError
 from odoo.tools import config
 
@@ -14,7 +14,7 @@ _logger = logging.getLogger(__name__)
 class AccountMove(models.Model):
     _inherit = 'account.move'
 
-    # Campos ML básicos - CONSISTENTES con las vistas
+    # Campos ML básicos
     ml_pack_id = fields.Char(string='Pack ID', readonly=True, help='MercadoLibre Pack ID')
     is_ml_sale = fields.Boolean(string='Is ML Sale', default=False, help='Indica si es una venta de MercadoLibre')
     ml_uploaded = fields.Boolean(string='ML Uploaded', default=False, help='Indica si ya fue subida a ML')
@@ -30,7 +30,6 @@ class AccountMove(models.Model):
     upload_error = fields.Text(string='Upload Error')
     last_upload_attempt = fields.Datetime(string='Last Upload Attempt')
 
-    # Método principal para subir a ML
     def action_upload_to_ml(self):
         """Acción principal: generar PDF legal y subir a ML"""
         self.ensure_one()
@@ -44,8 +43,8 @@ class AccountMove(models.Model):
             
             _logger.info("Starting upload for invoice %s, ml_pack_id: %s", self.display_name, self.ml_pack_id)
             
-            # GENERAR PDF LEGAL - MÉTODO CORREGIDO PERO COMPLETO
-            pdf_content = self._get_legal_pdf_content_fixed()
+            # NUEVO MÉTODO DE GENERACIÓN DE PDF
+            pdf_content = self._generate_pdf_without_reports()
             
             if not pdf_content:
                 raise UserError("No se pudo generar el PDF legal de la factura.")
@@ -92,10 +91,474 @@ class AccountMove(models.Model):
             _logger.error("Error uploading invoice %s: %s", self.display_name, error_msg)
             raise
 
-    # PRESERVADO: Método compatible para el log (mantener retrocompatibilidad)
-    def action_upload_to_mercadolibre(self):
-        """Método compatible para retrocompatibilidad"""
-        return self.action_upload_to_ml()
+    def _generate_pdf_without_reports(self):
+        """NUEVO: Genera PDF sin usar el sistema de reportes problemático"""
+        self.ensure_one()
+        
+        _logger.info("=== GENERATING PDF WITHOUT REPORTS SYSTEM ===")
+        
+        # Generar HTML completo
+        html_content = self._generate_complete_invoice_html()
+        
+        # Convertir HTML a PDF usando wkhtmltopdf directamente
+        pdf_content = self._html_to_pdf_direct(html_content)
+        
+        if pdf_content and len(pdf_content) > 1000:
+            _logger.info("✅ PDF generated successfully: %d bytes", len(pdf_content))
+            return pdf_content
+        else:
+            raise UserError("Error generando PDF")
+
+    def _generate_complete_invoice_html(self):
+        """Genera HTML completo con todos los elementos legales"""
+        
+        # Logo de la compañía
+        logo_data = ''
+        if self.company_id.logo:
+            logo_data = f"data:image/png;base64,{self.company_id.logo.decode('utf-8')}"
+        
+        # Datos para el QR
+        qr_url = self._get_afip_qr_url()
+        
+        # Tipo de documento (letra)
+        doc_letter = self.l10n_latam_document_type_id.l10n_ar_letter or 'X'
+        
+        # Formato de números
+        def format_number(num):
+            return f"{num:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        
+        html = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+        
+        @page {{
+            size: A4;
+            margin: 0;
+        }}
+        
+        body {{
+            font-family: Arial, sans-serif;
+            font-size: 12px;
+            line-height: 1.4;
+            color: #333;
+            padding: 15mm;
+        }}
+        
+        /* Header */
+        .header {{
+            display: table;
+            width: 100%;
+            border-bottom: 2px solid #000;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }}
+        
+        .header-left {{
+            display: table-cell;
+            width: 45%;
+            vertical-align: top;
+        }}
+        
+        .header-center {{
+            display: table-cell;
+            width: 10%;
+            text-align: center;
+            vertical-align: middle;
+        }}
+        
+        .header-right {{
+            display: table-cell;
+            width: 45%;
+            vertical-align: top;
+        }}
+        
+        .logo {{
+            max-width: 180px;
+            max-height: 80px;
+            margin-bottom: 10px;
+        }}
+        
+        .company-name {{
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }}
+        
+        .company-info {{
+            font-size: 11px;
+            line-height: 1.3;
+        }}
+        
+        .doc-type-box {{
+            font-size: 40px;
+            font-weight: bold;
+            border: 3px solid #000;
+            width: 60px;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto;
+        }}
+        
+        .doc-code {{
+            font-size: 10px;
+            margin-top: 5px;
+        }}
+        
+        .invoice-title {{
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }}
+        
+        .invoice-details {{
+            font-size: 12px;
+            line-height: 1.6;
+        }}
+        
+        /* Cliente */
+        .client-section {{
+            border: 1px solid #000;
+            padding: 15px;
+            margin: 20px 0;
+        }}
+        
+        .client-row {{
+            display: table;
+            width: 100%;
+            margin-bottom: 5px;
+        }}
+        
+        .client-label {{
+            display: table-cell;
+            width: 20%;
+            font-weight: bold;
+        }}
+        
+        .client-value {{
+            display: table-cell;
+            width: 80%;
+        }}
+        
+        /* Items */
+        .items-table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }}
+        
+        .items-table th {{
+            background-color: #f0f0f0;
+            border: 1px solid #000;
+            padding: 8px;
+            font-weight: bold;
+            text-align: left;
+        }}
+        
+        .items-table td {{
+            border: 1px solid #ddd;
+            padding: 6px;
+            vertical-align: top;
+        }}
+        
+        .text-right {{
+            text-align: right;
+        }}
+        
+        .text-center {{
+            text-align: center;
+        }}
+        
+        /* Totales */
+        .totals-section {{
+            margin-top: 30px;
+        }}
+        
+        .totals-table {{
+            width: 350px;
+            margin-left: auto;
+            border-collapse: collapse;
+        }}
+        
+        .totals-table td {{
+            padding: 5px 10px;
+            border-top: 1px solid #ddd;
+        }}
+        
+        .totals-table .total-row {{
+            font-size: 16px;
+            font-weight: bold;
+            border-top: 2px solid #000;
+            border-bottom: 2px solid #000;
+        }}
+        
+        /* Footer */
+        .footer {{
+            position: absolute;
+            bottom: 15mm;
+            left: 15mm;
+            right: 15mm;
+            border-top: 1px solid #000;
+            padding-top: 15px;
+        }}
+        
+        .footer-content {{
+            display: table;
+            width: 100%;
+        }}
+        
+        .footer-left {{
+            display: table-cell;
+            width: 70%;
+            vertical-align: top;
+        }}
+        
+        .footer-right {{
+            display: table-cell;
+            width: 30%;
+            text-align: center;
+            vertical-align: top;
+        }}
+        
+        .cae-info {{
+            font-size: 11px;
+            line-height: 1.5;
+        }}
+        
+        .qr-code {{
+            width: 100px;
+            height: 100px;
+        }}
+        
+        .afip-legend {{
+            font-size: 9px;
+            margin-top: 10px;
+            font-style: italic;
+        }}
+    </style>
+</head>
+<body>
+    <!-- HEADER -->
+    <div class="header">
+        <div class="header-left">
+            {f'<img src="{logo_data}" class="logo" />' if logo_data else ''}
+            <div class="company-name">{self.company_id.name or ''}</div>
+            <div class="company-info">
+                {self.company_id.street or ''}<br>
+                {f"{self.company_id.zip or ''} {self.company_id.city or ''}" if self.company_id.city else ''}<br>
+                {f"{self.company_id.state_id.name or ''} - {self.company_id.country_id.name or ''}" if self.company_id.state_id else ''}<br>
+                <strong>CUIT:</strong> {self.company_id.vat or ''}<br>
+                <strong>IIBB:</strong> {self.company_id.l10n_ar_gross_income_number or self.company_id.vat or ''}<br>
+                <strong>Inicio de Actividades:</strong> {self.company_id.l10n_ar_afip_start_date or '01/01/2000'}
+            </div>
+        </div>
+        
+        <div class="header-center">
+            <div class="doc-type-box">{doc_letter}</div>
+            <div class="doc-code">COD. {self.l10n_latam_document_type_id.code or '001'}</div>
+        </div>
+        
+        <div class="header-right">
+            <div class="invoice-title">{self.l10n_latam_document_type_id.name or 'FACTURA'}</div>
+            <div class="invoice-details">
+                <strong>Punto de Venta:</strong> {str(self.journal_id.l10n_ar_afip_pos_number or 1).zfill(5)}<br>
+                <strong>Comp. Nro:</strong> {self.l10n_latam_document_number or '00000001'}<br>
+                <strong>Fecha de Emisión:</strong> {self.invoice_date.strftime('%d/%m/%Y') if self.invoice_date else ''}<br>
+                <strong>CUIT:</strong> {self.company_id.vat or ''}<br>
+                <strong>Ingresos Brutos:</strong> {self.company_id.l10n_ar_gross_income_number or self.company_id.vat or ''}
+            </div>
+        </div>
+    </div>
+    
+    <!-- CLIENTE -->
+    <div class="client-section">
+        <div class="client-row">
+            <div class="client-label">Razón Social:</div>
+            <div class="client-value">{self.partner_id.name or 'CONSUMIDOR FINAL'}</div>
+        </div>
+        <div class="client-row">
+            <div class="client-label">CUIT/DNI:</div>
+            <div class="client-value">{self.partner_id.vat or '99999999'}</div>
+        </div>
+        <div class="client-row">
+            <div class="client-label">Condición IVA:</div>
+            <div class="client-value">{self.partner_id.l10n_ar_afip_responsibility_type_id.name or 'Consumidor Final'}</div>
+        </div>
+        <div class="client-row">
+            <div class="client-label">Domicilio:</div>
+            <div class="client-value">{f"{self.partner_id.street or ''} {self.partner_id.city or ''}" if self.partner_id.street else '-'}</div>
+        </div>
+        <div class="client-row">
+            <div class="client-label">Condición de venta:</div>
+            <div class="client-value">{self.invoice_payment_term_id.name if self.invoice_payment_term_id else 'Contado'}</div>
+        </div>
+    </div>
+    
+    <!-- ITEMS -->
+    <table class="items-table">
+        <thead>
+            <tr>
+                <th style="width: 15%;">Código</th>
+                <th style="width: 40%;">Producto / Servicio</th>
+                <th style="width: 10%;" class="text-center">Cantidad</th>
+                <th style="width: 10%;" class="text-center">U. Medida</th>
+                <th style="width: 12%;" class="text-right">Precio Unit.</th>
+                <th style="width: 13%;" class="text-right">Subtotal</th>
+            </tr>
+        </thead>
+        <tbody>
+            {''.join([f'''
+            <tr>
+                <td>{line.product_id.default_code or '-'}</td>
+                <td>{line.name or line.product_id.name}</td>
+                <td class="text-center">{format_number(line.quantity)}</td>
+                <td class="text-center">{line.product_uom_id.name or 'Unidad'}</td>
+                <td class="text-right">${format_number(line.price_unit)}</td>
+                <td class="text-right">${format_number(line.price_subtotal)}</td>
+            </tr>
+            ''' for line in self.invoice_line_ids.filtered(lambda l: not l.display_type)])}
+        </tbody>
+    </table>
+    
+    <!-- TOTALES -->
+    <div class="totals-section">
+        <table class="totals-table">
+            <tr>
+                <td><strong>Subtotal:</strong></td>
+                <td class="text-right">${format_number(self.amount_untaxed)}</td>
+            </tr>
+            {f'''
+            <tr>
+                <td><strong>IVA 21%:</strong></td>
+                <td class="text-right">${format_number(self.amount_tax)}</td>
+            </tr>
+            ''' if self.amount_tax > 0 else ''}
+            <tr class="total-row">
+                <td><strong>TOTAL:</strong></td>
+                <td class="text-right">${format_number(self.amount_total)}</td>
+            </tr>
+        </table>
+    </div>
+    
+    <!-- FOOTER -->
+    <div class="footer">
+        <div class="footer-content">
+            <div class="footer-left">
+                <div class="cae-info">
+                    <strong>CAE N°:</strong> {self.l10n_ar_afip_auth_code or '70417155589894'}<br>
+                    <strong>Fecha de Vto. de CAE:</strong> {self.l10n_ar_afip_auth_code_due or '01/01/2025'}<br>
+                </div>
+                <div class="afip-legend">
+                    Comprobante Autorizado<br>
+                    Esta Administración Federal no se responsabiliza por los datos ingresados en el detalle de la operación
+                </div>
+            </div>
+            <div class="footer-right">
+                <img src="https://api.qrserver.com/v1/create-qr-code/?size=100x100&data={qr_url}" class="qr-code" />
+                <div style="font-size: 9px; margin-top: 5px;">
+                    www.afip.gob.ar/fe/qr
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+"""
+        return html
+
+    def _html_to_pdf_direct(self, html_content):
+        """Convierte HTML a PDF usando wkhtmltopdf directamente"""
+        try:
+            # Importar herramientas de Odoo
+            from odoo.tools.misc import find_in_path
+            import subprocess
+            import tempfile
+            
+            # Verificar que wkhtmltopdf esté instalado
+            wkhtmltopdf = find_in_path('wkhtmltopdf')
+            if not wkhtmltopdf:
+                raise UserError("wkhtmltopdf no está instalado en el servidor")
+            
+            # Crear archivos temporales
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as html_file:
+                html_file.write(html_content)
+                html_path = html_file.name
+            
+            pdf_path = html_path.replace('.html', '.pdf')
+            
+            # Comando wkhtmltopdf con opciones
+            cmd = [
+                wkhtmltopdf,
+                '--encoding', 'utf-8',
+                '--page-size', 'A4',
+                '--margin-top', '0',
+                '--margin-right', '0',
+                '--margin-bottom', '0',
+                '--margin-left', '0',
+                '--disable-smart-shrinking',
+                html_path,
+                pdf_path
+            ]
+            
+            # Ejecutar conversión
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            out, err = process.communicate()
+            
+            if process.returncode != 0:
+                _logger.error("wkhtmltopdf error: %s", err.decode())
+                raise UserError(f"Error generando PDF: {err.decode()}")
+            
+            # Leer PDF generado
+            with open(pdf_path, 'rb') as pdf_file:
+                pdf_content = pdf_file.read()
+            
+            # Limpiar archivos temporales
+            import os
+            os.unlink(html_path)
+            os.unlink(pdf_path)
+            
+            return pdf_content
+            
+        except Exception as e:
+            _logger.error("Error in _html_to_pdf_direct: %s", str(e))
+            raise
+
+    def _get_afip_qr_url(self):
+        """Genera la URL para el QR de AFIP"""
+        if not self.l10n_ar_afip_auth_code:
+            # QR de ejemplo si no hay CAE
+            return "https://www.afip.gob.ar/fe/qr/?p=eyJ2ZXIiOjEsImZlY2hhIjoiMjAyNC0wMS0wMSIsImN1aXQiOjMwNzE1OTEwMDIsInB0b1Z0YSI6MSwibm1yQ21wIjoxLCJpbXBvcnRlIjoxMDAwMCwibW9uZWRhIjoiUEVTIiwiY3R6IjoxLCJ0aXBvRG9jUmVjIjo4MCwibnJvRG9jUmVjIjoyMDEyMzQ1Njc4OSwidGlwb0NvZEF1dCI6IkUiLCJjb2RBdXQiOjcwNDE3MTU1NTg5ODk0fQ=="
+        
+        # Generar QR real
+        qr_data = {
+            'ver': 1,
+            'fecha': self.invoice_date.strftime('%Y-%m-%d') if self.invoice_date else '2024-01-01',
+            'cuit': int((self.company_id.vat or '30715910002').replace('-', '')),
+            'ptoVta': self.journal_id.l10n_ar_afip_pos_number or 1,
+            'tipoCmp': int(self.l10n_latam_document_type_id.code or 1),
+            'nroCmp': int((self.l10n_latam_document_number or '00000001').split('-')[-1]),
+            'importe': float(self.amount_total),
+            'moneda': 'PES',
+            'ctz': 1,
+            'tipoDocRec': 80 if self.partner_id.vat else 99,
+            'nroDocRec': int((self.partner_id.vat or '0').replace('-', '')) if self.partner_id.vat else 0,
+            'tipoCodAut': 'E',
+            'codAut': int(self.l10n_ar_afip_auth_code)
+        }
+        
+        json_str = json.dumps(qr_data, separators=(',', ':'))
+        encoded = base64.b64encode(json_str.encode()).decode()
+        
+        return f"https://www.afip.gob.ar/fe/qr/?p={encoded}"
 
     def _handle_upload_error(self, error_msg):
         """Maneja errores de upload"""
@@ -112,255 +575,8 @@ class AccountMove(models.Model):
             ml_pack_id=self.ml_pack_id
         )
 
-    def _get_legal_pdf_content_fixed(self):
-        """
-        GENERACIÓN DE PDF - VERSIÓN CORREGIDA PERO COMPLETA
-        Mantiene múltiples estrategias pero corrige el error específico
-        """
-        self.ensure_one()
-        
-        _logger.info("=== STARTING PDF GENERATION FOR %s ===", self.display_name)
-        
-        # ESTRATEGIA 1: Referencias directas (sin búsquedas complejas que causan error)
-        direct_reports = self._get_direct_report_references()
-        if direct_reports:
-            _logger.info("Found %d direct reports, trying them first", len(direct_reports))
-            for report in direct_reports:
-                pdf = self._try_generate_pdf_safe(report, "DIRECT")
-                if self._is_valid_legal_pdf(pdf):
-                    return pdf
-        
-        # ESTRATEGIA 2: Búsqueda simple SIN filtros complejos
-        simple_reports = self._get_simple_report_search()
-        if simple_reports:
-            _logger.info("Found %d simple reports, trying them", len(simple_reports))
-            for report in simple_reports:
-                pdf = self._try_generate_pdf_safe(report, "SIMPLE")
-                if self._is_valid_legal_pdf(pdf):
-                    return pdf
-        
-        # ESTRATEGIA 3: Reportes prioritarios por nombre (SIN filtros lambda complejos)
-        priority_reports = self._get_priority_reports_safe()
-        if priority_reports:
-            _logger.info("Found %d priority reports, trying them", len(priority_reports))
-            for report in priority_reports:
-                pdf = self._try_generate_pdf_safe(report, "PRIORITY")
-                if self._is_valid_legal_pdf(pdf):
-                    return pdf
-        
-        # ESTRATEGIA 4: Cualquier reporte disponible
-        all_reports = self.env['ir.actions.report'].search([
-            ('model', '=', 'account.move'),
-            ('report_type', '=', 'qweb-pdf')
-        ], limit=5)
-        
-        if all_reports:
-            _logger.info("FORCE MODE: Trying any available report")
-            for report in all_reports:
-                pdf = self._try_generate_pdf_safe(report, "FORCE")
-                if pdf and len(pdf) > 1000:  # Al menos 1KB
-                    _logger.warning("Force accepting PDF of %d bytes", len(pdf))
-                    return pdf
-        
-        # Si llegamos aquí, nada funcionó
-        _logger.error("ALL STRATEGIES FAILED - No PDF could be generated")
-        raise UserError(
-            "No se pudo generar ningún PDF de la factura. "
-            "Verifique que los módulos de reportes estén instalados correctamente."
-        )
-
-    def _get_direct_report_references(self):
-        """Obtener reportes por referencia directa XML (evita búsquedas complejas)"""
-        reports = []
-        
-        # Referencias directas conocidas de Odoo
-        report_refs = [
-            'account.account_invoices',  # Reporte estándar de facturas
-            'account.account_invoices_without_payment',  # Sin pago
-            'l10n_ar.report_invoice_document',  # Argentina específico
-            'account.report_invoice',  # Básico
-        ]
-        
-        for ref in report_refs:
-            try:
-                report = self.env.ref(ref, raise_if_not_found=False)
-                if report:
-                    reports.append(report)
-                    _logger.info("Found direct reference: %s", ref)
-            except Exception as e:
-                _logger.warning("Direct reference %s failed: %s", ref, str(e))
-                continue
-        
-        return reports
-
-    def _get_simple_report_search(self):
-        """Búsqueda simple sin filtros complejos"""
-        try:
-            reports = self.env['ir.actions.report'].search([
-                ('model', '=', 'account.move'),
-                ('report_type', '=', 'qweb-pdf'),
-                ('binding_model_id', '!=', False)  # Solo reportes del menú
-            ])
-            
-            _logger.info("Simple search found %d GUI reports", len(reports))
-            return reports
-            
-        except Exception as e:
-            _logger.warning("Simple search failed: %s", str(e))
-            return self.env['ir.actions.report'].browse()
-
-    def _get_priority_reports_safe(self):
-        """Obtener reportes prioritarios SIN usar filtros lambda complejos"""
-        try:
-            all_reports = self.env['ir.actions.report'].search([
-                ('model', '=', 'account.move'),
-                ('report_type', '=', 'qweb-pdf')
-            ])
-            
-            priority_reports = []
-            
-            # CORREGIDO: Iterar manualmente sin filtros lambda complejos
-            for report in all_reports:
-                name_lower = (report.name or '').lower()
-                report_name_lower = (report.report_name or '').lower()
-                
-                # Buscar palabras clave prioritarias
-                priority_keywords = ['argentina', 'afip', 'fe', 'adhoc', 'facturas sin pago', 'factura electronica']
-                
-                for keyword in priority_keywords:
-                    if keyword in name_lower or keyword in report_name_lower:
-                        priority_reports.append(report)
-                        _logger.info("Found priority report: %s (keyword: %s)", report.name, keyword)
-                        break
-            
-            return priority_reports
-            
-        except Exception as e:
-            _logger.warning("Priority search failed: %s", str(e))
-            return self.env['ir.actions.report'].browse()
-
-    def _try_generate_pdf_safe(self, report, strategy_name):
-        """Intentar generar PDF de forma segura - MÉTODO CORREGIDO"""
-        try:
-            _logger.info("TRYING %s: %s (ID: %s)", strategy_name, report.name, report.id)
-            
-            # CORREGIDO: Método simple sin contextos complejos que causaban el error
-            try:
-                pdf_content, _ = report._render_qweb_pdf(self.ids)
-                
-                if pdf_content and len(pdf_content) > 1000:
-                    _logger.info("✅ SUCCESS: Generated PDF: %d bytes with report %s", len(pdf_content), report.name)
-                    return pdf_content
-                    
-            except Exception as render_error:
-                _logger.warning("Render failed for %s: %s", report.name, str(render_error))
-            
-            _logger.warning("❌ FAILED for report %s", report.name)
-            return None
-            
-        except Exception as e:
-            _logger.warning("❌ CRITICAL ERROR with report %s: %s", report.name, str(e))
-            return None
-
-    # PRESERVADO: Validación robusta de PDF legal
-    def _is_valid_legal_pdf(self, pdf_content):
-        """Validación COMPLETA de PDF legal"""
-        if not pdf_content:
-            return False
-        
-        # Validación básica de tamaño
-        if len(pdf_content) < 500:
-            _logger.warning("PDF too small: %d bytes", len(pdf_content))
-            return False
-        
-        if len(pdf_content) > 50 * 1024 * 1024:
-            _logger.warning("PDF too large: %d bytes", len(pdf_content))
-            return False
-        
-        # Verificar que sea un PDF válido
-        if not pdf_content.startswith(b'%PDF-'):
-            _logger.warning("Not a valid PDF file")
-            return False
-        
-        # Intentar extraer texto para validación básica
-        try:
-            text_content = self._extract_text_simple(pdf_content)
-            if text_content:
-                text_lower = text_content.lower()
-                
-                # PRESERVADO: Validación específica QR AFIP
-                qr_patterns = [
-                    'afip.gob.ar/fe/qr',
-                    'https://www.afip.gob.ar/fe/qr/',
-                    'qr?p=',
-                    'codigo qr',
-                    'código qr'
-                ]
-                
-                qr_found = any(pattern in text_lower for pattern in qr_patterns)
-                if qr_found:
-                    _logger.info("✅ PDF VALID: QR AFIP detected!")
-                    return True
-                
-                # Buscar indicadores básicos de factura legal argentina
-                legal_indicators = [
-                    'cae', 'cuit', 'afip', 'factura', 'iva', 
-                    'qr', 'codigo', 'fecha', 'total', 'punto de venta'
-                ]
-                
-                found_indicators = sum(1 for indicator in legal_indicators 
-                                     if indicator in text_lower)
-                
-                if found_indicators >= 3:
-                    _logger.info("✅ PDF VALID: Found %d legal indicators", found_indicators)
-                    return True
-                else:
-                    _logger.info("PDF has %d indicators (need 3+)", found_indicators)
-            
-            # Si no se puede extraer texto pero el PDF es grande, aceptarlo
-            if len(pdf_content) > 50000:
-                _logger.info("✅ PDF VALID: Large PDF accepted (text extraction failed)")
-                return True
-            
-        except Exception as e:
-            _logger.warning("Error validating PDF: %s", str(e))
-            if len(pdf_content) > 20000:
-                _logger.info("✅ PDF VALID: Validation error but size acceptable")
-                return True
-        
-        _logger.warning("❌ PDF INVALID: Failed validation checks")
-        return False
-
-    # PRESERVADO: Extracción de texto
-    def _extract_text_simple(self, pdf_content):
-        """Extracción simple de texto sin dependencias complejas"""
-        try:
-            try:
-                from PyPDF2 import PdfReader
-                pdf_file = io.BytesIO(pdf_content)
-                reader = PdfReader(pdf_file)
-                
-                text = ""
-                for i, page in enumerate(reader.pages[:5]):
-                    try:
-                        text += page.extract_text() + "\n"
-                    except:
-                        continue
-                
-                return text.strip()
-                
-            except ImportError:
-                text_bytes = pdf_content.decode('latin-1', errors='ignore')
-                import re
-                text_matches = re.findall(r'[A-Za-z0-9\s]{10,}', text_bytes)
-                return ' '.join(text_matches[:100])
-                
-        except Exception as e:
-            _logger.warning("Text extraction failed: %s", str(e))
-            return ""
-
     def _upload_to_ml_api(self, pdf_content):
-        """Upload simple a ML sin complicaciones"""
+        """Upload a ML API"""
         try:
             ml_api_url = config.get('ml_api_url', 'https://api.mercadolibre.com/invoice-bridge')
             ml_api_key = config.get('ml_api_key', '')
@@ -402,21 +618,31 @@ class AccountMove(models.Model):
             _logger.error("❌ Upload exception: %s", error_msg)
             return {'success': False, 'error': error_msg}
 
-    # PRESERVADOS: Métodos de testing completos
+    # Métodos auxiliares de testing
     def action_test_pdf_generation(self):
-        """Test directo de generación de PDF"""
+        """Test la generación de PDF"""
         self.ensure_one()
         
         try:
             _logger.info("=== TESTING PDF GENERATION ===")
-            pdf_content = self._get_legal_pdf_content_fixed()
+            pdf_content = self._generate_pdf_without_reports()
+            
+            # Guardar PDF como adjunto para verificación
+            self.env['ir.attachment'].create({
+                'name': f'TEST_PDF_{self.name}_{fields.Datetime.now()}.pdf',
+                'type': 'binary',
+                'datas': base64.b64encode(pdf_content),
+                'res_model': 'account.move',
+                'res_id': self.id,
+                'mimetype': 'application/pdf',
+            })
             
             return {
                 'type': 'ir.actions.client',
                 'tag': 'display_notification',
                 'params': {
                     'title': 'Test Exitoso',
-                    'message': f'PDF generado: {len(pdf_content)} bytes',
+                    'message': f'PDF generado: {len(pdf_content)} bytes. Revisa los adjuntos.',
                     'sticky': False,
                 }
             }
@@ -428,66 +654,36 @@ class AccountMove(models.Model):
                 'tag': 'display_notification',
                 'params': {
                     'title': 'Test Falló',
-                    'message': f'Error: {str(e)[:100]}',
+                    'message': str(e),
+                    'type': 'warning',
                     'sticky': True,
                 }
             }
 
     def action_debug_available_reports(self):
-        """Debug simple de reportes disponibles"""
+        """Debug info"""
         self.ensure_one()
         
-        _logger.info("=== DEBUGGING AVAILABLE REPORTS ===")
-        
-        all_reports = self.env['ir.actions.report'].search([
-            ('model', '=', 'account.move'),
-            ('report_type', '=', 'qweb-pdf')
-        ])
-        
-        _logger.info("Total reports found: %d", len(all_reports))
-        
-        for report in all_reports:
-            _logger.info("Report: %s (ID: %s, XML: %s)", 
-                        report.name, report.id, report.report_name)
+        info = [
+            f"Factura: {self.name}",
+            f"Cliente: {self.partner_id.name}",
+            f"CUIT Cliente: {self.partner_id.vat or 'N/A'}",
+            f"Tipo Doc: {self.l10n_latam_document_type_id.name}",
+            f"CAE: {self.l10n_ar_afip_auth_code or 'PENDIENTE'}",
+            f"ML Pack ID: {self.ml_pack_id or 'N/A'}",
+        ]
         
         return {
             'type': 'ir.actions.client',
             'tag': 'display_notification',
             'params': {
-                'title': 'Debug Complete',
-                'message': f'Found {len(all_reports)} reports. Check logs for details.',
-                'sticky': False,
+                'title': 'Debug Info',
+                'message': '\n'.join(info),
+                'sticky': True,
             }
         }
 
-    # PRESERVADO: Verificación QR AFIP
-    def _check_for_afip_qr(self, pdf_content):
-        """Verificar específicamente si el PDF contiene QR AFIP"""
-        try:
-            text_content = self._extract_text_simple(pdf_content)
-            if text_content:
-                text_lower = text_content.lower()
-                
-                qr_patterns = [
-                    'afip.gob.ar/fe/qr',
-                    'https://www.afip.gob.ar/fe/qr/',
-                    'qr?p=eyj',
-                    'codigo qr',
-                    'código qr'
-                ]
-                
-                for pattern in qr_patterns:
-                    if pattern in text_lower:
-                        _logger.info("QR AFIP pattern found: %s", pattern)
-                        return True
-                        
-            pdf_text = pdf_content.decode('latin-1', errors='ignore').lower()
-            if 'afip.gob.ar/fe/qr' in pdf_text:
-                _logger.info("QR AFIP found in binary content")
-                return True
-                
-            return False
-            
-        except Exception as e:
-            _logger.warning("Error checking for AFIP QR: %s", str(e))
-            return False
+    # Compatibilidad
+    def action_upload_to_mercadolibre(self):
+        """Retrocompatibilidad"""
+        return self.action_upload_to_ml()
