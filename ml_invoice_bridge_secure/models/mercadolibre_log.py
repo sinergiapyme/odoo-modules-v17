@@ -67,6 +67,7 @@ class MercadoLibreLog(models.Model):
         if self.invoice_id.state != 'posted':
             raise UserError(_('Solo se pueden subir facturas validadas'))
         
+        # CORREGIDO: usar campos que existen
         if not self.invoice_id.is_ml_sale:
             raise UserError(_('Esta factura no es de MercadoLibre'))
         
@@ -74,11 +75,11 @@ class MercadoLibreLog(models.Model):
             raise UserError(_('Esta factura ya está marcada como subida'))
         
         try:
-            # Llamar al método de upload de la factura
-            result = self.invoice_id.action_upload_to_mercadolibre()
+            # CORREGIDO: llamar al método que existe
+            result = self.invoice_id.action_upload_to_ml()
             
             # Si llegamos aquí, el upload fue exitoso
-            # El método action_upload_to_mercadolibre ya crea su propio log de éxito
+            # El método action_upload_to_ml ya crea su propio log de éxito
             
             # Actualizar status del log actual para marcarlo como "retry successful"
             self.write({
