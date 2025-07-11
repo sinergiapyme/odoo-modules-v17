@@ -1,41 +1,52 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
-    <!-- Vista de formulario - CORREGIDA con sintaxis ODOO 17 -->
+    <!-- UNA SOLA vista de formulario - LIMPIA Y PROFESIONAL -->
     <record id="view_move_form_ml_extension" model="ir.ui.view">
         <field name="name">account.move.form.ml.extension</field>
         <field name="model">account.move</field>
         <field name="inherit_id" ref="account.view_move_form"/>
         <field name="arch" type="xml">
+            <!-- Botón principal en header -->
             <xpath expr="//header" position="inside">
-                <!-- CORREGIDO: ODOO 17 SYNTAX - sin attrs -->
                 <button name="action_upload_to_ml" 
-                        string="Upload to MercadoLibre" 
+                        string="📤 Upload to MercadoLibre" 
                         type="object" 
                         class="btn-primary" 
-                        invisible="not is_ml_sale or ml_uploaded or state != 'posted'"/>
+                        invisible="not is_ml_sale or ml_uploaded or state != 'posted'"
+                        confirm="¿Confirma subir esta factura a MercadoLibre?"/>
+                        
+                <!-- Botones de testing SOLO para desarrolladores -->
+                <div groups="base.group_no_one">
+                    <button name="action_test_pdf_generation" 
+                            string="🧪 Test PDF" 
+                            type="object" 
+                            class="btn-secondary"/>
+                </div>
             </xpath>
             
-            <!-- CORREGIDO: usar sintaxis ODOO 17 -->
+            <!-- Campos ML - Solo cuando es relevante -->
             <xpath expr="//field[@name='ref']" position="after">
-                <group name="mercadolibre_info" string="MercadoLibre" invisible="not is_ml_sale">
-                    <field name="is_ml_sale"/>
-                    <field name="ml_pack_id" required="is_ml_sale"/>
-                    <field name="ml_uploaded" readonly="1"/>
-                    <field name="ml_upload_date" readonly="1" invisible="not ml_upload_date"/>
-                    <field name="upload_status" readonly="1" invisible="upload_status == 'pending'"/>
-                    <field name="last_upload_attempt" readonly="1" invisible="not last_upload_attempt"/>
-                    <field name="upload_error" readonly="1" invisible="not upload_error"/>
+                <group name="mercadolibre_info" string="📦 MercadoLibre" invisible="not is_ml_sale">
+                    <field name="is_ml_sale" string="Venta ML"/>
+                    <field name="ml_pack_id" string="Pack ID" required="is_ml_sale" placeholder="Ejemplo: 2000008457814991"/>
+                    
+                    <!-- Estado de upload -->
+                    <separator string="Estado del Upload" invisible="not ml_pack_id"/>
+                    <field name="ml_uploaded" string="Subida a ML" readonly="1" invisible="not ml_pack_id"/>
+                    <field name="upload_status" string="Estado" readonly="1" invisible="upload_status == 'pending' or not ml_pack_id"/>
+                    <field name="ml_upload_date" string="Fecha de subida" readonly="1" invisible="not ml_upload_date"/>
+                    <field name="last_upload_attempt" string="Último intento" readonly="1" invisible="not last_upload_attempt"/>
+                    <field name="upload_error" string="Error" readonly="1" invisible="not upload_error" widget="text"/>
                 </group>
             </xpath>
         </field>
     </record>
 
-    <!-- CORREGIDO: Acción con campos que existen -->
+    <!-- Action para facturas ML -->
     <record id="action_invoice_ml_sales" model="ir.actions.act_window">
-        <field name="name">MercadoLibre Invoices</field>
+        <field name="name">Facturas MercadoLibre</field>
         <field name="res_model">account.move</field>
         <field name="view_mode">tree,form</field>
-        <!-- CORREGIDO: Solo facturas ML pendientes usando campos que existen -->
         <field name="domain">[('is_ml_sale', '=', True), ('ml_uploaded', '=', False)]</field>
         <field name="context">{'default_is_ml_sale': True, 'create': False}</field>
         <field name="help" type="html">
@@ -43,8 +54,8 @@
                 No hay facturas de MercadoLibre pendientes
             </p>
             <p>
-                Las facturas de MercadoLibre pendientes de subir aparecerán aquí.
-                Asegúrate de marcar las facturas como "ML Sale" y asignarles un Pack ID.
+                Las facturas de MercadoLibre pendientes aparecerán aquí.<br/>
+                Para marcar una factura como ML: edítala y marca "Venta ML" + asigna "Pack ID".
             </p>
         </field>
     </record>
