@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
+    <!-- SOLO vistas para mercadolibre.log - SIN vistas de account.move -->
+    
     <!-- Tree View - Upload Logs -->
     <record id="view_mercadolibre_log_tree" model="ir.ui.view">
         <field name="name">mercadolibre.log.tree</field>
@@ -126,7 +128,10 @@
     </record>
 
     <!-- 
-    NOTA: Vista de account.move eliminada de este archivo para evitar duplicados.
+    ============================================================================
+    NOTA IMPORTANTE: 
+    Vista de account.move ELIMINADA de este archivo para evitar duplicados.
     La vista principal está en account_move_views.xml
+    ============================================================================
     -->
 </odoo>
