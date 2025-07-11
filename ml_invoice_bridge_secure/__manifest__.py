@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 {
     'name': 'MercadoLibre Invoice Bridge - Secure',
-    'version': '17.0.2.2.1',  # Incremento por fix legal con l10n_ar_ux
+    'version': '17.0.2.2.2',  # Incremento por fix del TypeError
     'category': 'Sales',
     'summary': 'Módulo seguro para subir facturas legales de Odoo a MercadoLibre',
     'author': 'Sinergia Pyme SAS',
@@ -17,6 +17,7 @@
         'views/mercadolibre_config_views.xml',
         'views/mercadolibre_invoice_log_views.xml',
         'views/account_move_views.xml',
+        'views/account_move_dev_views.xml',  # NUEVO: Solo para desarrolladores
         'views/menu_views.xml',
         'data/cron_data.xml',
     ],
