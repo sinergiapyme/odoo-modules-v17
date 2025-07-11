@@ -1,5 +1,5 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
-access_mercadolibre_config_user,mercadolibre.config.user,model_mercadolibre_config,base.group_user,1,1,1,1
-access_mercadolibre_log_user,mercadolibre.log.user,model_mercadolibre_log,base.group_user,1,0,1,0
-access_mercadolibre_config_manager,mercadolibre.config.manager,model_mercadolibre_config,account.group_account_manager,1,1,1,1
-access_mercadolibre_log_manager,mercadolibre.log.manager,model_mercadolibre_log,account.group_account_manager,1,1,1,1
+access_mercadolibre_config_user,MercadoLibre Config User,model_mercadolibre_config,base.group_user,1,0,0,0
+access_mercadolibre_config_manager,MercadoLibre Config Manager,model_mercadolibre_config,account.group_account_manager,1,1,1,1
+access_mercadolibre_log_user,MercadoLibre Log User,model_mercadolibre_log,base.group_user,1,0,0,0
+access_mercadolibre_log_manager,MercadoLibre Log Manager,model_mercadolibre_log,account.group_account_manager,1,1,1,1
