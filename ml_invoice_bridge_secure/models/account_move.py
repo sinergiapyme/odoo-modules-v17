@@ -178,6 +178,25 @@ class AccountMove(models.Model):
         # Generar URL del QR
         qr_url = self._get_afip_qr_url_safe()
         
+        # Construir líneas de productos
+        items_html = ""
+        for line in self.invoice_line_ids.filtered(lambda l: not l.display_type):
+            product_code = f'[{line.product_id.default_code}] ' if line.product_id and line.product_id.default_code else ''
+            product_name = line.name or (line.product_id.name if line.product_id else '')
+            quantity = format_number(line.quantity)
+            uom = line.product_uom_id.name if line.product_uom_id else 'Un'
+            price = format_number(line.price_unit)
+            subtotal = format_number(line.price_subtotal)
+            
+            items_html += f"""
+            <tr>
+                <td>{product_code}{product_name}</td>
+                <td class="text-center">{quantity} {uom}</td>
+                <td class="text-right">${price}</td>
+                <td class="text-right">$ {subtotal}</td>
+            </tr>
+            """
+        
         html = f"""
 <!DOCTYPE html>
 <html>
@@ -499,18 +518,7 @@ class AccountMove(models.Model):
             </tr>
         </thead>
         <tbody>
-            {''.join([f"""
-            <tr>
-                <td>
-                    {f'[{line.product_id.default_code}] ' if line.product_id and line.product_id.default_code else ''}{line.name or (line.product_id.name if line.product_id else '')}
-                </td>
-                <td class="text-center">
-                    {format_number(line.quantity)} {line.product_uom_id.name if line.product_uom_id else 'Un'}
-                </td>
-                <td class="text-right">${format_number(line.price_unit)}</td>
-                <td class="text-right">$ {format_number(line.price_subtotal)}</td>
-            </tr>
-            """ for line in self.invoice_line_ids.filtered(lambda l: not l.display_type)])}
+            {items_html}
         </tbody>
     </table>
     
