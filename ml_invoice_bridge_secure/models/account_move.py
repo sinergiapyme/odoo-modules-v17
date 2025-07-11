@@ -729,49 +729,102 @@ class AccountMove(models.Model):
         )
 
     def _upload_to_ml_api(self, pdf_content):
-        """Upload a ML API"""
+        """Upload a ML API usando la configuración del módulo"""
         try:
-            ml_api_url = config.get('ml_api_url', 'https://api.mercadolibre.com/invoice-bridge')
-            ml_api_key = config.get('ml_api_key', '')
+            # Obtener configuración activa
+            ml_config = self.env['mercadolibre.config'].get_active_config()
             
-            if not ml_api_key:
-                # SIMULACIÓN para testing
-                _logger.warning("ML API Key not configured - SIMULATION MODE")
-                return {'success': True, 'data': {'simulated': True, 'message': 'Test upload successful'}}
+            if not ml_config:
+                raise UserError("No hay configuración activa de MercadoLibre")
             
+            if not ml_config.access_token:
+                raise UserError("No hay Access Token configurado en MercadoLibre")
+            
+            # URL correcta para subir facturas fiscales a ML
+            # Formato: https://api.mercadolibre.com/packs/{pack_id}/fiscal_documents
+            ml_api_url = f'https://api.mercadolibre.com/packs/{self.ml_pack_id}/fiscal_documents'
+            
+            # Preparar el archivo
             files = {
-                'invoice_pdf': ('invoice.pdf', pdf_content, 'application/pdf')
+                'fiscal_document': (f'factura_{self.name}.pdf', pdf_content, 'application/pdf')
             }
             
-            data = {
-                'ml_pack_id': self.ml_pack_id,
-                'invoice_number': self.name,
-                'invoice_date': self.invoice_date.isoformat() if self.invoice_date else '',
-                'amount_total': str(self.amount_total),
-                'partner_name': self.partner_id.name or '',
-            }
-            
+            # Headers con el token de la configuración
             headers = {
-                'Authorization': f'Bearer {ml_api_key}',
-                'X-Source': 'odoo-ce-bridge'
+                'Authorization': f'Bearer {ml_config.access_token}',
+                'Accept': 'application/json'
             }
             
             _logger.info("Uploading to ML: %s (%d bytes)", self.display_name, len(pdf_content))
+            _logger.info("URL: %s", ml_api_url)
+            _logger.info("ML User ID: %s", ml_config.ml_user_id)
             
-            response = requests.post(ml_api_url, files=files, data=data, headers=headers, timeout=30)
+            response = requests.post(ml_api_url, files=files, headers=headers, timeout=30)
             
-            if response.status_code == 200:
+            _logger.info("Response status: %s", response.status_code)
+            _logger.info("Response headers: %s", response.headers)
+            _logger.info("Response body: %s", response.text[:1000])
+            
+            if response.status_code in [200, 201]:
                 _logger.info("✅ Upload successful")
                 return {'success': True, 'data': response.json() if response.content else {}}
+            elif response.status_code == 401:
+                # Token expirado
+                raise UserError("Token expirado. Por favor, actualice el token en la configuración de MercadoLibre")
+            elif response.status_code == 404:
+                raise UserError(f"Pack ID {self.ml_pack_id} no encontrado en MercadoLibre")
             else:
-                error_msg = f"HTTP {response.status_code}: {response.text[:200]}"
+                error_data = response.json() if response.content else {}
+                error_msg = error_data.get('message', f"HTTP {response.status_code}: {response.text[:200]}")
                 _logger.error("❌ Upload failed: %s", error_msg)
                 return {'success': False, 'error': error_msg}
                 
-        except Exception as e:
-            error_msg = f"Upload error: {str(e)}"
-            _logger.error("❌ Upload exception: %s", error_msg)
+        except requests.exceptions.Timeout:
+            error_msg = "Timeout al conectar con MercadoLibre"
+            _logger.error(error_msg)
             return {'success': False, 'error': error_msg}
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Error de conexión: {str(e)}"
+            _logger.error(error_msg)
+            return {'success': False, 'error': error_msg}
+        except Exception as e:
+            error_msg = f"Error inesperado: {str(e)}"
+            _logger.error("❌ Upload exception: %s", error_msg, exc_info=True)
+            return {'success': False, 'error': error_msg}
+
+    def action_reset_ml_upload(self):
+        """Resetea el estado de upload de ML - SOLO PARA ADMIN"""
+        self.ensure_one()
+        
+        if not self.env.user.has_group('base.group_system'):
+            raise UserError("Solo los administradores pueden resetear el estado de upload")
+        
+        self.write({
+            'ml_uploaded': False,
+            'upload_status': 'pending',
+            'upload_error': False,
+            'ml_upload_date': False,
+            'last_upload_attempt': False
+        })
+        
+        # Crear log de reset
+        self.env['mercadolibre.log'].create_log(
+            invoice_id=self.id,
+            status='success',
+            message='Upload status reset by admin',
+            ml_pack_id=self.ml_pack_id
+        )
+        
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'title': 'Reset Exitoso',
+                'message': 'El estado de upload ha sido reseteado',
+                'type': 'success',
+                'sticky': False,
+            }
+        }
 
     # Métodos de testing
     def action_test_pdf_generation(self):
