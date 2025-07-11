@@ -23,7 +23,12 @@ class MercadoLibreConfig(models.Model):
     
     # Status
     active = fields.Boolean(string='Active', default=True)
-    auto_upload = fields.Boolean(string='Auto Upload', default=False)
+    auto_upload = fields.Boolean(
+        string='Auto Upload', 
+        default=False,
+        help='ATENCIÓN: Solo activar cuando el módulo esté completamente estable. '
+             'También requiere activar el cron desde Configuración > Tareas Programadas'
+    )
     api_status = fields.Selection([
         ('not_tested', 'Not Tested'),
         ('success', 'Connection OK'), 
@@ -31,6 +36,25 @@ class MercadoLibreConfig(models.Model):
     ], default='not_tested', readonly=True)
     last_test = fields.Datetime(string='Last Test', readonly=True)
     last_token_refresh = fields.Datetime(string='Last Token Refresh', readonly=True)
+    
+    # Info del cron
+    cron_status = fields.Char(string='Cron Status', compute='_compute_cron_status', store=False)
+
+    @api.depends('auto_upload')
+    def _compute_cron_status(self):
+        for config in self:
+            cron = self.env.ref('ml_invoice_bridge_secure.cron_auto_upload_ml_invoices', raise_if_not_found=False)
+            if cron:
+                if config.auto_upload and cron.active:
+                    config.cron_status = '✅ Auto Upload ACTIVO'
+                elif config.auto_upload and not cron.active:
+                    config.cron_status = '⚠️ Config activa pero Cron DESACTIVADO'
+                elif not config.auto_upload and cron.active:
+                    config.cron_status = '⚠️ Cron activo pero Config DESACTIVADA'
+                else:
+                    config.cron_status = '❌ Auto Upload DESACTIVADO (seguro)'
+            else:
+                config.cron_status = '❓ Cron no encontrado'
 
     @api.constrains('active')
     def _check_single_active(self):
@@ -112,3 +136,17 @@ class MercadoLibreConfig(models.Model):
         except Exception as e:
             raise UserError(_('Token refresh error: %s') % str(e))
 
+    def action_open_cron_settings(self):
+        """Abrir configuración del cron directamente"""
+        cron = self.env.ref('ml_invoice_bridge_secure.cron_auto_upload_ml_invoices', raise_if_not_found=False)
+        if cron:
+            return {
+                'type': 'ir.actions.act_window',
+                'name': _('Auto Upload Cron Settings'),
+                'view_mode': 'form',
+                'res_model': 'ir.cron',
+                'res_id': cron.id,
+                'target': 'new',
+            }
+        else:
+            raise UserError(_('Cron no encontrado'))
