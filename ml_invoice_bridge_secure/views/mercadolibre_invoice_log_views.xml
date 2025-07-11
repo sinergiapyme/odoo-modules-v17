@@ -13,17 +13,17 @@
                        decoration-success="status == 'success'"
                        decoration-danger="status == 'error'"/>
                 <field name="message"/>
-                <!-- Botones de acción funcionando -->
+                <!-- Botones de acción funcionando - ODOO 17 SYNTAX -->
                 <button name="action_view_invoice" 
                         type="object" 
                         icon="fa-external-link" 
                         title="View Invoice"
-                        invisible="invoice_id == False"/>
+                        invisible="not invoice_id"/>
                 <button name="action_retry_upload" 
                         type="object" 
                         icon="fa-refresh" 
                         title="Retry Upload"
-                        invisible="status == 'success' or invoice_id == False"
+                        invisible="status == 'success' or not invoice_id"
                         confirm="¿Está seguro de reintentar la subida de esta factura?"/>
             </tree>
         </field>
@@ -40,12 +40,12 @@
                             string="View Invoice" 
                             type="object"
                             class="btn-primary"
-                            invisible="invoice_id == False"/>
+                            invisible="not invoice_id"/>
                     <button name="action_retry_upload" 
                             string="Retry Upload" 
                             type="object"
                             class="btn-secondary"
-                            invisible="status == 'success' or invoice_id == False"
+                            invisible="status == 'success' or not invoice_id"
                             confirm="¿Está seguro de reintentar la subida de esta factura?"/>
                 </header>
                 <sheet>
@@ -58,11 +58,11 @@
                         </group>
                     </group>
                     
-                    <group string="Message" invisible="message == False">
+                    <group string="Message" invisible="not message">
                         <field name="message" nolabel="1"/>
                     </group>
                     
-                    <group string="MercadoLibre Response" invisible="ml_response == False">
+                    <group string="MercadoLibre Response" invisible="not ml_response">
                         <field name="ml_response" nolabel="1" widget="ace" options="{'mode': 'json'}"/>
                     </group>
                 </sheet>
@@ -129,19 +129,19 @@
         <field name="code">action = records.action_retry_upload_bulk()</field>
     </record>
 
-    <!-- Vista heredada CORREGIDA - Solo campos que existen -->
+    <!-- Vista heredada CORREGIDA - ODOO 17 SYNTAX -->
     <record id="view_account_move_form_inherit_ml_testing" model="ir.ui.view">
         <field name="name">account.move.form.inherit.ml.testing</field>
         <field name="model">account.move</field>
         <field name="inherit_id" ref="account.view_move_form"/>
         <field name="arch" type="xml">
             <xpath expr="//header" position="inside">
-                <!-- Botón principal de upload -->
+                <!-- Botón principal de upload - ODOO 17 SYNTAX -->
                 <button name="action_upload_to_ml" 
                         type="object" 
                         string="Upload to ML" 
                         class="btn-primary"
-                        attrs="{'invisible': [('ml_pack_id', '=', False)]}"
+                        invisible="not ml_pack_id"
                         confirm="¿Está seguro de subir esta factura a MercadoLibre?"/>
                 
                 <!-- Botones de testing (solo para administradores) -->
@@ -170,7 +170,7 @@
                         groups="base.group_no_one"/>
             </xpath>
             
-            <!-- CAMPOS BÁSICOS - Solo los que SÍ existen -->
+            <!-- CAMPOS BÁSICOS - ODOO 17 SYNTAX -->
             <xpath expr="//field[@name='ref']" position="after">
                 <field name="ml_pack_id" string="ML Pack ID" help="MercadoLibre Pack ID"/>
                 <field name="is_ml_sale" string="ML Sale" help="Marca si es venta de MercadoLibre"/>
