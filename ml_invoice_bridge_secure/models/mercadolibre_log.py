@@ -11,7 +11,7 @@ class MercadoLibreLog(models.Model):
 
     display_name = fields.Char(string='Name', compute='_compute_display_name', store=True)
     invoice_id = fields.Many2one('account.move', string='Invoice', required=True, ondelete='cascade')
-    pack_id = fields.Char(string='Pack ID')
+    ml_pack_id = fields.Char(string='Pack ID')
     status = fields.Selection([('success', 'Success'), ('error', 'Error')], string='Status', required=True)
     message = fields.Text(string='Message')
     ml_response = fields.Text(string='ML Response')
@@ -30,7 +30,7 @@ class MercadoLibreLog(models.Model):
             'invoice_id': invoice_id,
             'status': status,
             'message': message,
-            'pack_id': kwargs.get('pack_id'),
+            'ml_pack_id': kwargs.get('ml_pack_id'),
             'ml_response': kwargs.get('ml_response'),
         })
 
