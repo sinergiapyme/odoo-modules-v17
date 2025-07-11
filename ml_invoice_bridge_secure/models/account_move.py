@@ -499,19 +499,18 @@ class AccountMove(models.Model):
             </tr>
         </thead>
         <tbody>
-            {''.join([f'''
+            {''.join([f"""
             <tr>
                 <td>
-                    {f'[{line.product_id.default_code}] ' if line.product_id and line.product_id.default_code else ''}
-                    {line.name or (line.product_id.name if line.product_id else '')}
+                    {f'[{line.product_id.default_code}] ' if line.product_id and line.product_id.default_code else ''}{line.name or (line.product_id.name if line.product_id else '')}
                 </td>
                 <td class="text-center">
                     {format_number(line.quantity)} {line.product_uom_id.name if line.product_uom_id else 'Un'}
                 </td>
-                <td class="text-right">{format_number(line.price_unit)}</td>
+                <td class="text-right">${format_number(line.price_unit)}</td>
                 <td class="text-right">$ {format_number(line.price_subtotal)}</td>
             </tr>
-            ''' for line in self.invoice_line_ids.filtered(lambda l: not l.display_type)])}
+            """ for line in self.invoice_line_ids.filtered(lambda l: not l.display_type)])}
         </tbody>
     </table>
     
