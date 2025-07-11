@@ -14,6 +14,15 @@
                         class="btn-primary" 
                         invisible="not is_ml_sale or ml_uploaded or state != 'posted'"
                         confirm="¿Confirma subir esta factura a MercadoLibre?"/>
+                
+                <!-- Botón de reset SOLO para admin cuando está subida -->
+                <button name="action_reset_ml_upload" 
+                        string="🔄 Reset ML Upload" 
+                        type="object" 
+                        class="btn-warning" 
+                        groups="base.group_system"
+                        invisible="not ml_uploaded"
+                        confirm="¿Está seguro de resetear el estado de upload? Esto permitirá subir la factura nuevamente."/>
                         
                 <!-- Botones de testing SOLO para desarrolladores -->
                 <div groups="base.group_no_one">
@@ -47,14 +56,14 @@
         <field name="name">Facturas MercadoLibre</field>
         <field name="res_model">account.move</field>
         <field name="view_mode">tree,form</field>
-        <field name="domain">[('is_ml_sale', '=', True), ('ml_uploaded', '=', False)]</field>
+        <field name="domain">[('is_ml_sale', '=', True)]</field>
         <field name="context">{'default_is_ml_sale': True, 'create': False}</field>
         <field name="help" type="html">
             <p class="o_view_nocontent_smiling_face">
-                No hay facturas de MercadoLibre pendientes
+                No hay facturas de MercadoLibre
             </p>
             <p>
-                Las facturas de MercadoLibre pendientes aparecerán aquí.<br/>
+                Las facturas de MercadoLibre aparecerán aquí.<br/>
                 Para marcar una factura como ML: edítala y marca "Venta ML" + asigna "Pack ID".
             </p>
         </field>
