@@ -19,7 +19,7 @@
             <xpath expr="//field[@name='ref']" position="after">
                 <group name="mercadolibre_info" string="MercadoLibre" attrs="{'invisible': [('is_ml_sale', '=', False)]}">
                     <field name="is_ml_sale"/>
-                    <field name="pack_id" attrs="{'required': [('is_ml_sale', '=', True)]}"/>
+                    <field name="ml_pack_id" attrs="{'required': [('is_ml_sale', '=', True)]}"/>
                     <field name="ml_uploaded" readonly="1"/>
                     <field name="ml_upload_date" readonly="1" attrs="{'invisible': [('ml_upload_date', '=', False)]}"/>
                     <field name="upload_status" readonly="1" attrs="{'invisible': [('upload_status', '=', 'pending')]}"/>
