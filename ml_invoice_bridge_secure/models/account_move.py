@@ -412,107 +412,6 @@ class AccountMove(models.Model):
                     'sticky': False,
                 }
             }
-
-    def action_test_with_working_record(self):
-        """Test específico basado en el record que vimos funcionando en el log"""
-        self.ensure_one()
-        
-        try:
-            _logger.info("=== TESTING WITH CURRENT RECORD (based on working log) ===")
-            _logger.info("Current record ID: %s (log showed record [7] working)", self.id)
-            
-            # Verificar que tengamos una factura válida como la del log
-            if not self.name or not self.partner_id:
-                return {
-                    'type': 'ir.actions.client',
-                    'tag': 'display_notification',
-                    'params': {
-                        'title': 'Invalid Record',
-                        'message': 'This record lacks basic invoice data. Try with a posted invoice.',
-                        'sticky': True,
-                    }
-                }
-            
-            _logger.info("Invoice: %s, Partner: %s, State: %s", 
-                        self.name, self.partner_id.name, self.state)
-            
-            # Usar exactamente la misma lógica que nuestra función principal
-            pdf_content = self._get_legal_pdf_content()
-            
-            if pdf_content:
-                # Validar que tenga QR AFIP como en el log exitoso
-                qr_validation = self._check_for_afip_qr(pdf_content)
-                
-                message = f"""PDF Generated Successfully!
-Size: {len(pdf_content)} bytes
-QR AFIP: {'✅ Found' if qr_validation else '❌ Not detected'}
-Record ID: {self.id}
-Invoice: {self.name}"""
-                
-                return {
-                    'type': 'ir.actions.client',
-                    'tag': 'display_notification',
-                    'params': {
-                        'title': 'SUCCESS - PDF Generated!',
-                        'message': message,
-                        'sticky': True,
-                    }
-                }
-            else:
-                return {
-                    'type': 'ir.actions.client',
-                    'tag': 'display_notification',
-                    'params': {
-                        'title': 'FAILED - No PDF Generated',
-                        'message': 'Could not generate PDF with current strategies',
-                        'sticky': True,
-                    }
-                }
-                
-        except Exception as e:
-            _logger.error("Test with working record failed: %s", str(e), exc_info=True)
-            return {
-                'type': 'ir.actions.client',
-                'tag': 'display_notification',
-                'params': {
-                    'title': 'Test Error',
-                    'message': f'Error: {str(e)[:200]}',
-                    'sticky': True,
-                }
-            }
-
-    def _check_for_afip_qr(self, pdf_content):
-        """Verificar específicamente si el PDF contiene QR AFIP"""
-        try:
-            text_content = self._extract_text_simple(pdf_content)
-            if text_content:
-                text_lower = text_content.lower()
-                
-                # Patrones específicos del QR AFIP que vimos en el log
-                qr_patterns = [
-                    'afip.gob.ar/fe/qr',
-                    'https://www.afip.gob.ar/fe/qr/',
-                    'qr?p=eyj',  # Base64 del QR
-                    'codigo qr',
-                    'código qr'
-                ]
-                
-                for pattern in qr_patterns:
-                    if pattern in text_lower:
-                        _logger.info("QR AFIP pattern found: %s", pattern)
-                        return True
-                        
-            # También buscar en el contenido binario del PDF
-            pdf_text = pdf_content.decode('latin-1', errors='ignore').lower()
-            if 'afip.gob.ar/fe/qr' in pdf_text:
-                _logger.info("QR AFIP found in binary content")
-                return True
-                
-            return False
-            
-        except Exception as e:
-            _logger.warning("Error checking for AFIP QR: %s", str(e))
-            return False
             
         except Exception as e:
             _logger.error("Test failed: %s", str(e))
@@ -643,3 +542,104 @@ Invoice: {self.name}"""
                     'sticky': True,
                 }
             }
+
+    def action_test_with_working_record(self):
+        """Test específico basado en el record que vimos funcionando en el log"""
+        self.ensure_one()
+        
+        try:
+            _logger.info("=== TESTING WITH CURRENT RECORD (based on working log) ===")
+            _logger.info("Current record ID: %s (log showed record [7] working)", self.id)
+            
+            # Verificar que tengamos una factura válida como la del log
+            if not self.name or not self.partner_id:
+                return {
+                    'type': 'ir.actions.client',
+                    'tag': 'display_notification',
+                    'params': {
+                        'title': 'Invalid Record',
+                        'message': 'This record lacks basic invoice data. Try with a posted invoice.',
+                        'sticky': True,
+                    }
+                }
+            
+            _logger.info("Invoice: %s, Partner: %s, State: %s", 
+                        self.name, self.partner_id.name, self.state)
+            
+            # Usar exactamente la misma lógica que nuestra función principal
+            pdf_content = self._get_legal_pdf_content()
+            
+            if pdf_content:
+                # Validar que tenga QR AFIP como en el log exitoso
+                qr_validation = self._check_for_afip_qr(pdf_content)
+                
+                message = f"""PDF Generated Successfully!
+Size: {len(pdf_content)} bytes
+QR AFIP: {'✅ Found' if qr_validation else '❌ Not detected'}
+Record ID: {self.id}
+Invoice: {self.name}"""
+                
+                return {
+                    'type': 'ir.actions.client',
+                    'tag': 'display_notification',
+                    'params': {
+                        'title': 'SUCCESS - PDF Generated!',
+                        'message': message,
+                        'sticky': True,
+                    }
+                }
+            else:
+                return {
+                    'type': 'ir.actions.client',
+                    'tag': 'display_notification',
+                    'params': {
+                        'title': 'FAILED - No PDF Generated',
+                        'message': 'Could not generate PDF with current strategies',
+                        'sticky': True,
+                    }
+                }
+                
+        except Exception as e:
+            _logger.error("Test with working record failed: %s", str(e), exc_info=True)
+            return {
+                'type': 'ir.actions.client',
+                'tag': 'display_notification',
+                'params': {
+                    'title': 'Test Error',
+                    'message': f'Error: {str(e)[:200]}',
+                    'sticky': True,
+                }
+            }
+
+    def _check_for_afip_qr(self, pdf_content):
+        """Verificar específicamente si el PDF contiene QR AFIP"""
+        try:
+            text_content = self._extract_text_simple(pdf_content)
+            if text_content:
+                text_lower = text_content.lower()
+                
+                # Patrones específicos del QR AFIP que vimos en el log
+                qr_patterns = [
+                    'afip.gob.ar/fe/qr',
+                    'https://www.afip.gob.ar/fe/qr/',
+                    'qr?p=eyj',  # Base64 del QR
+                    'codigo qr',
+                    'código qr'
+                ]
+                
+                for pattern in qr_patterns:
+                    if pattern in text_lower:
+                        _logger.info("QR AFIP pattern found: %s", pattern)
+                        return True
+                        
+            # También buscar en el contenido binario del PDF
+            pdf_text = pdf_content.decode('latin-1', errors='ignore').lower()
+            if 'afip.gob.ar/fe/qr' in pdf_text:
+                _logger.info("QR AFIP found in binary content")
+                return True
+                
+            return False
+            
+        except Exception as e:
+            _logger.warning("Error checking for AFIP QR: %s", str(e))
+            return False
