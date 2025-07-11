@@ -15,7 +15,7 @@ class AccountMove(models.Model):
     _inherit = 'account.move'
 
     # Campos ML básicos - CONSISTENTES con las vistas
-    pack_id = fields.Char(string='Pack ID', readonly=True, help='MercadoLibre Pack ID')
+    ml_pack_id = fields.Char(string='Pack ID', readonly=True, help='MercadoLibre Pack ID')
     is_ml_sale = fields.Boolean(string='Is ML Sale', default=False, help='Indica si es una venta de MercadoLibre')
     ml_uploaded = fields.Boolean(string='ML Uploaded', default=False, help='Indica si ya fue subida a ML')
     ml_upload_date = fields.Datetime(string='ML Upload Date', readonly=True, help='Fecha de subida a ML')
@@ -35,14 +35,14 @@ class AccountMove(models.Model):
         """Acción principal: generar PDF legal y subir a ML"""
         self.ensure_one()
         
-        if not self.pack_id:
+        if not self.ml_pack_id:
             raise UserError("Esta factura no tiene Pack ID asociado.")
         
         try:
             self.upload_status = 'uploading'
             self.last_upload_attempt = fields.Datetime.now()
             
-            _logger.info("Starting upload for invoice %s, pack_id: %s", self.display_name, self.pack_id)
+            _logger.info("Starting upload for invoice %s, ml_pack_id: %s", self.display_name, self.ml_pack_id)
             
             # GENERAR PDF LEGAL - ESTO ES LO CRÍTICO
             pdf_content = self._get_legal_pdf_content()
@@ -68,7 +68,7 @@ class AccountMove(models.Model):
                     invoice_id=self.id,
                     status='success', 
                     message=f'Upload successful: {len(pdf_content)} bytes uploaded',
-                    pack_id=self.pack_id,
+                    ml_pack_id=self.ml_pack_id,
                     ml_response=str(result.get('data', {}))
                 )
                 
@@ -109,7 +109,7 @@ class AccountMove(models.Model):
             invoice_id=self.id,
             status='error',
             message=error_msg,
-            pack_id=self.pack_id
+            ml_pack_id=self.ml_pack_id
         )
 
     def _get_legal_pdf_content(self):
@@ -398,7 +398,7 @@ class AccountMove(models.Model):
             }
             
             data = {
-                'pack_id': self.pack_id,
+                'ml_pack_id': self.ml_pack_id,
                 'invoice_number': self.name,
                 'invoice_date': self.invoice_date.isoformat() if self.invoice_date else '',
                 'amount_total': str(self.amount_total),
