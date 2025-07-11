@@ -178,22 +178,47 @@ class AccountMove(models.Model):
         # Generar URL del QR
         qr_url = self._get_afip_qr_url_safe()
         
-        # Construir líneas de productos
+        # Construir líneas de productos - VERSIÓN DIRECTA Y EFICIENTE
         items_html = ""
-        for line in self.invoice_line_ids.filtered(lambda l: not l.display_type):
-            product_code = f'[{line.product_id.default_code}] ' if line.product_id and line.product_id.default_code else ''
-            product_name = line.name or (line.product_id.name if line.product_id else '')
-            quantity = format_number(line.quantity)
-            uom = line.product_uom_id.name if line.product_uom_id else 'Un'
-            price = format_number(line.price_unit)
-            subtotal = format_number(line.price_subtotal)
-            
-            items_html += f"""
+        _logger.info(f"Processing invoice lines for {self.name}. Total lines: {len(self.invoice_line_ids)}")
+        
+        for line in self.invoice_line_ids:
+            # Solo procesar líneas con cantidad y precio
+            if line.quantity and line.price_unit:
+                # Obtener código del producto
+                product_code = ''
+                if line.product_id and line.product_id.default_code:
+                    product_code = f'[{line.product_id.default_code}] '
+                
+                # Obtener nombre del producto/servicio
+                product_name = line.name or ''
+                if not product_name and line.product_id:
+                    product_name = line.product_id.name or 'Producto'
+                
+                # Formatear valores
+                quantity = format_number(line.quantity)
+                uom = line.product_uom_id.name if line.product_uom_id else 'Un'
+                price = format_number(line.price_unit)
+                subtotal = format_number(line.price_subtotal)
+                
+                # Agregar línea al HTML
+                items_html += f"""
+                <tr>
+                    <td>{product_code}{product_name}</td>
+                    <td class="text-center">{quantity} {uom}</td>
+                    <td class="text-right">${price}</td>
+                    <td class="text-right">$ {subtotal}</td>
+                </tr>
+                """
+        
+        # Si no hay líneas, agregar mensaje
+        if not items_html:
+            _logger.warning(f"No product lines found for invoice {self.name}")
+            items_html = """
             <tr>
-                <td>{product_code}{product_name}</td>
-                <td class="text-center">{quantity} {uom}</td>
-                <td class="text-right">${price}</td>
-                <td class="text-right">$ {subtotal}</td>
+                <td colspan="4" style="text-align: center; padding: 20px; color: #999;">
+                    No se encontraron líneas de productos
+                </td>
             </tr>
             """
         
@@ -719,7 +744,7 @@ class AccountMove(models.Model):
         except Exception as e:
             _logger.warning(f"Error generating QR URL: {e}")
             # URL del QR de la factura de ejemplo
-            return "https://www.afip.gob.ar/fe/qr/?p=eyJ2ZXIiOiAxLCAiZmVjaGEiOiAiMjAyNS0wNy0xMCIsICJjdWl0IjogMzA3MTY3MzQ0NDMsICJwdG9WdGEiOiAxLCAidGlwb0NtcCI6IDYsICJucm9DbXAiOiAzMDUsICJpbXBvcnRlIjogMzU5MC4wLCAibW9uZWRhIjogIlBFUyIsICJjdHoiOiAxLjAsICJ0aXBvQ29kQXV0IjogIkUiLCAiY29kQXV0IjogNzUyODM4OTUwMTEzNjIsICJ0aXBvRG9jUmVjIjogOTYsICJucm9Eb2NSZWMiOiAzMTU1NjEwM30="
+            return "https://www.afip.gob.ar/fe/qr/?p=eyJ2ZXIiOiAxLCAiZmVjaGEiOiAiMjAyNS0wNy0xMCIsICJjdWl0IjogMzA3MTY3MzQ0NDMsICJwdG9WdGEiOiAxLCAidGlwb0NtcCI6IDYsICJucm9DbXAiOiAzMDUsICJpbXBvcnRlIjogMzU5MC4wLCAibW9uZWRhIjogIlBFUyIsICJjdHoiOiAxLjAsICJ0aXBvQ29kQXV0IjogIkUiLCAiY29kQXV0IjogNzUyODM4OTUwMTEzNjIsICJ0aXBvRG9jUmVjIjogOTYsICJucm9Db2RSZWMiOiAzMTU1NjEwM30="
 
     def _handle_upload_error(self, error_msg):
         """Maneja errores de upload"""
@@ -888,6 +913,13 @@ class AccountMove(models.Model):
         info.append(f"Partner: {self.partner_id.name}")
         info.append(f"Total: ${self.amount_total:,.2f}")
         info.append(f"ML Pack ID: {self.ml_pack_id or 'N/A'}")
+        info.append("")
+        info.append("=== INVOICE LINES ===")
+        info.append(f"Total lines: {len(self.invoice_line_ids)}")
+        
+        for idx, line in enumerate(self.invoice_line_ids):
+            info.append(f"Line {idx+1}: qty={line.quantity}, price={line.price_unit}, name={line.name[:30]}")
+        
         info.append("")
         info.append("=== AFIP FIELDS STATUS ===")
         
