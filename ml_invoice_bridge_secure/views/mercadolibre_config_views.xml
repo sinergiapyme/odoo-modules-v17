@@ -8,8 +8,22 @@
                 <header>
                     <button name="test_api_connection" string="Test Connection" type="object" class="btn-primary"/>
                     <button name="refresh_access_token" string="Refresh Token" type="object" class="btn-secondary" invisible="not refresh_token"/>
+                    <button name="action_open_cron_settings" string="Configure Cron" type="object" class="btn-secondary" groups="base.group_no_one"/>
                 </header>
                 <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_open_cron_settings" 
+                                type="object" 
+                                class="oe_stat_button" 
+                                icon="fa-clock-o"
+                                groups="base.group_no_one">
+                            <div class="o_field_widget o_stat_info">
+                                <span class="o_stat_text">Cron</span>
+                                <span class="o_stat_text">Settings</span>
+                            </div>
+                        </button>
+                    </div>
+                    
                     <group>
                         <group string="Configuración OAuth">
                             <field name="name"/>
@@ -21,10 +35,30 @@
                             <field name="access_token" password="True"/>
                             <field name="refresh_token" password="True"/>
                             <field name="ml_user_id" readonly="1"/>
-                            <field name="auto_upload"/>
                         </group>
                     </group>
-                    <group string="Estado">
+                    
+                    <group string="Auto Upload Settings">
+                        <field name="auto_upload"/>
+                        <field name="cron_status" readonly="1" widget="text"/>
+                        <div class="alert alert-info" role="alert" invisible="auto_upload">
+                            <strong>Auto Upload Desactivado</strong><br/>
+                            Para activar el auto upload automático:
+                            <ol>
+                                <li>Asegúrate de que el módulo esté completamente estable</li>
+                                <li>Marca "Auto Upload" arriba</li>
+                                <li>Ve a Configuración > Técnico > Tareas Programadas</li>
+                                <li>Busca "Auto Upload ML Invoices" y actívala</li>
+                            </ol>
+                        </div>
+                        <div class="alert alert-warning" role="alert" invisible="not auto_upload">
+                            <strong>⚠️ Auto Upload Activado</strong><br/>
+                            El sistema procesará automáticamente facturas ML pendientes cada 15 minutos.
+                            Asegúrate de que el cron también esté activado en Tareas Programadas.
+                        </div>
+                    </group>
+                    
+                    <group string="Estado API">
                         <field name="api_status"/>
                         <field name="last_test" invisible="not last_test"/>
                         <field name="last_token_refresh" invisible="not last_token_refresh"/>
