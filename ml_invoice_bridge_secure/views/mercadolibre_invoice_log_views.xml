@@ -129,14 +129,14 @@
         <field name="code">action = records.action_retry_upload_bulk()</field>
     </record>
 
-    <!-- Vista heredada MINIMALISTA - Solo botones de testing -->
+    <!-- Vista heredada CORREGIDA - SOLO campos que existen -->
     <record id="view_account_move_form_inherit_ml_testing" model="ir.ui.view">
         <field name="name">account.move.form.inherit.ml.testing</field>
         <field name="model">account.move</field>
         <field name="inherit_id" ref="account.view_move_form"/>
         <field name="arch" type="xml">
             <xpath expr="//header" position="inside">
-                <!-- Botón principal de upload - SOLO si hay pack_id -->
+                <!-- CORREGIDO: usar pack_id (NO ml_pack_id) -->
                 <button name="action_upload_to_ml" 
                         type="object" 
                         string="Upload to ML" 
@@ -170,7 +170,7 @@
                         groups="base.group_no_one"/>
             </xpath>
             
-            <!-- CAMPOS BÁSICOS - Solo los que SÍ existen -->
+            <!-- CORREGIDO: Solo campos que existen en el modelo -->
             <xpath expr="//field[@name='ref']" position="after">
                 <field name="pack_id" string="ML Pack ID" help="MercadoLibre Pack ID"/>
                 <field name="is_ml_sale" string="ML Sale" help="Marca si es venta de MercadoLibre"/>
