@@ -15,7 +15,7 @@ if config and config.auto_upload:
         ('is_ml_sale', '=', True),
         ('ml_uploaded', '=', False),
         ('state', '=', 'posted'),
-        ('pack_id', '!=', False)
+        ('ml_pack_id', '!=', False)
     ], limit=10)  # Procesar máximo 10 por vez
     
     for invoice in pending_invoices:
@@ -27,7 +27,7 @@ if config and config.auto_upload:
                 invoice_id=invoice.id,
                 status='error',
                 message=f'Auto upload failed: {str(e)}',
-                pack_id=invoice.pack_id
+                ml_pack_id=invoice.ml_pack_id
             )
             continue
             </field>
@@ -41,14 +41,14 @@ if config and config.auto_upload:
         <!-- Cron para limpiar logs antiguos -->
         <record id="cron_cleanup_old_logs" model="ir.cron">
             <field name="name">Cleanup Old ML Logs</field>
-            <field name="model_id" ref="model_mercadolibre_log"/>
+            <field name="model_id" ref="base.model_ir_cron"/>
             <field name="state">code</field>
             <field name="code">
 # Eliminar logs de más de 90 días
 from datetime import datetime, timedelta
 cutoff_date = datetime.now() - timedelta(days=90)
 old_logs = env['mercadolibre.log'].search([
-    ('create_date', '<', cutoff_date)
+    ('create_date', '&lt;', cutoff_date)
 ])
 if old_logs:
     old_logs.unlink()
