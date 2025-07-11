@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
-    <!-- Tree View - CON todos los botones funcionando -->
+    <!-- Tree View - Upload Logs -->
     <record id="view_mercadolibre_log_tree" model="ir.ui.view">
         <field name="name">mercadolibre.log.tree</field>
         <field name="model">mercadolibre.log</field>
@@ -13,7 +13,6 @@
                        decoration-success="status == 'success'"
                        decoration-danger="status == 'error'"/>
                 <field name="message"/>
-                <!-- Botones de acción funcionando - ODOO 17 SYNTAX -->
                 <button name="action_view_invoice" 
                         type="object" 
                         icon="fa-external-link" 
@@ -29,7 +28,7 @@
         </field>
     </record>
 
-    <!-- Form View - CON header buttons -->
+    <!-- Form View - Upload Logs -->
     <record id="view_mercadolibre_log_form" model="ir.ui.view">
         <field name="name">mercadolibre.log.form</field>
         <field name="model">mercadolibre.log</field>
@@ -70,7 +69,7 @@
         </field>
     </record>
 
-    <!-- Search View - SIN referencias problemáticas -->
+    <!-- Search View -->
     <record id="view_mercadolibre_log_search" model="ir.ui.view">
         <field name="name">mercadolibre.log.search</field>
         <field name="model">mercadolibre.log</field>
@@ -80,19 +79,16 @@
                 <field name="ml_pack_id"/>
                 <field name="message"/>
                 
-                <!-- Filtros básicos SEGUROS -->
                 <filter string="Success" name="filter_success" domain="[('status', '=', 'success')]"/>
                 <filter string="Errors" name="filter_errors" domain="[('status', '=', 'error')]"/>
                 
                 <separator/>
                 
-                <!-- Filtros de fecha -->
                 <filter string="Today" name="filter_today" 
                         domain="[('create_date', '&gt;=', datetime.datetime.combine(context_today(), datetime.time(0,0,0)))]"/>
                 <filter string="This Week" name="filter_week" 
                         domain="[('create_date', '&gt;=', (context_today() - datetime.timedelta(days=7)).strftime('%Y-%m-%d'))]"/>
                 
-                <!-- Agrupaciones -->
                 <group expand="0" string="Group By">
                     <filter string="Status" name="group_by_status" context="{'group_by': 'status'}"/>
                     <filter string="Date" name="group_by_date" context="{'group_by': 'create_date:day'}"/>
@@ -129,52 +125,8 @@
         <field name="code">action = records.action_retry_upload_bulk()</field>
     </record>
 
-    <!-- Vista heredada CORREGIDA - ODOO 17 SYNTAX -->
-    <record id="view_account_move_form_inherit_ml_testing" model="ir.ui.view">
-        <field name="name">account.move.form.inherit.ml.testing</field>
-        <field name="model">account.move</field>
-        <field name="inherit_id" ref="account.view_move_form"/>
-        <field name="arch" type="xml">
-            <xpath expr="//header" position="inside">
-                <!-- Botón principal de upload - ODOO 17 SYNTAX -->
-                <button name="action_upload_to_ml" 
-                        type="object" 
-                        string="Upload to ML" 
-                        class="btn-primary"
-                        invisible="not ml_pack_id"
-                        confirm="¿Está seguro de subir esta factura a MercadoLibre?"/>
-                
-                <!-- Botones de testing (solo para administradores) -->
-                <button name="action_test_pdf_generation" 
-                        type="object" 
-                        string="Test PDF Generation" 
-                        class="btn-secondary"
-                        groups="base.group_no_one"/>
-                
-                <button name="action_test_with_working_record" 
-                        type="object" 
-                        string="Test Working Record" 
-                        class="btn-secondary"
-                        groups="base.group_no_one"/>
-                
-                <button name="action_debug_available_reports" 
-                        type="object" 
-                        string="Debug Reports" 
-                        class="btn-secondary"
-                        groups="base.group_no_one"/>
-                
-                <button name="action_test_exact_gui_report" 
-                        type="object" 
-                        string="Test GUI Reports" 
-                        class="btn-secondary"
-                        groups="base.group_no_one"/>
-            </xpath>
-            
-            <!-- CAMPOS BÁSICOS - ODOO 17 SYNTAX -->
-            <xpath expr="//field[@name='ref']" position="after">
-                <field name="ml_pack_id" string="ML Pack ID" help="MercadoLibre Pack ID"/>
-                <field name="is_ml_sale" string="ML Sale" help="Marca si es venta de MercadoLibre"/>
-            </xpath>
-        </field>
-    </record>
+    <!-- 
+    NOTA: Vista de account.move eliminada de este archivo para evitar duplicados.
+    La vista principal está en account_move_views.xml
+    -->
 </odoo>
