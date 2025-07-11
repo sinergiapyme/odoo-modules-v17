@@ -1,1 +1,27 @@
-
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Vista adicional SOLO para desarrolladores/administradores -->
+    <record id="view_move_form_ml_dev_testing" model="ir.ui.view">
+        <field name="name">account.move.form.ml.dev.testing</field>
+        <field name="model">account.move</field>
+        <field name="inherit_id" ref="ml_invoice_bridge_secure.view_move_form_ml_extension"/>
+        <field name="arch" type="xml">
+            <!-- Botones de testing SOLO para grupos técnicos -->
+            <xpath expr="//button[@name='action_upload_to_ml']" position="after">
+                <div groups="base.group_no_one" class="oe_button_box">
+                    <button name="action_test_pdf_generation" 
+                            string="🧪 Test PDF" 
+                            type="object" 
+                            class="btn-secondary oe_stat_button"
+                            title="Test PDF generation"/>
+                    
+                    <button name="action_debug_available_reports" 
+                            string="📊 Debug Reports" 
+                            type="object" 
+                            class="btn-secondary oe_stat_button"
+                            title="Debug available reports"/>
+                </div>
+            </xpath>
+        </field>
+    </record>
+</odoo>
