@@ -14,8 +14,13 @@ _logger = logging.getLogger(__name__)
 class AccountMove(models.Model):
     _inherit = 'account.move'
 
-    # Campos básicos para ML
-    pack_id = fields.Char(string='Pack ID', readonly=True)
+    # Campos ML básicos - CONSISTENTES con las vistas
+    pack_id = fields.Char(string='Pack ID', readonly=True, help='MercadoLibre Pack ID')
+    is_ml_sale = fields.Boolean(string='Is ML Sale', default=False, help='Indica si es una venta de MercadoLibre')
+    ml_uploaded = fields.Boolean(string='ML Uploaded', default=False, help='Indica si ya fue subida a ML')
+    ml_upload_date = fields.Datetime(string='ML Upload Date', readonly=True, help='Fecha de subida a ML')
+    
+    # Estados de upload
     upload_status = fields.Selection([
         ('pending', 'Pending'),
         ('uploading', 'Uploading'),
@@ -25,6 +30,7 @@ class AccountMove(models.Model):
     upload_error = fields.Text(string='Upload Error')
     last_upload_attempt = fields.Datetime(string='Last Upload Attempt')
 
+    # Método principal para subir a ML
     def action_upload_to_ml(self):
         """Acción principal: generar PDF legal y subir a ML"""
         self.ensure_one()
@@ -50,8 +56,22 @@ class AccountMove(models.Model):
             result = self._upload_to_ml_api(pdf_content)
             
             if result.get('success'):
-                self.upload_status = 'uploaded'
-                self.upload_error = False
+                self.write({
+                    'upload_status': 'uploaded',
+                    'upload_error': False,
+                    'ml_uploaded': True,
+                    'ml_upload_date': fields.Datetime.now()
+                })
+                
+                # Crear log de éxito
+                self.env['mercadolibre.log'].create_log(
+                    invoice_id=self.id,
+                    status='success', 
+                    message=f'Upload successful: {len(pdf_content)} bytes uploaded',
+                    pack_id=self.pack_id,
+                    ml_response=str(result.get('data', {}))
+                )
+                
                 return {
                     'type': 'ir.actions.client',
                     'tag': 'display_notification',
@@ -62,13 +82,35 @@ class AccountMove(models.Model):
                     }
                 }
             else:
-                raise UserError(f"Error en API de ML: {result.get('error', 'Unknown error')}")
+                error_msg = result.get('error', 'Unknown error')
+                self._handle_upload_error(error_msg)
+                raise UserError(f"Error en API de ML: {error_msg}")
                 
         except Exception as e:
-            self.upload_status = 'error'
-            self.upload_error = str(e)
-            _logger.error("Error uploading invoice %s: %s", self.display_name, str(e))
+            error_msg = str(e)
+            self._handle_upload_error(error_msg)
+            _logger.error("Error uploading invoice %s: %s", self.display_name, error_msg)
             raise
+
+    # Método compatible para el log (mantener retrocompatibilidad)
+    def action_upload_to_mercadolibre(self):
+        """Método compatible para retrocompatibilidad"""
+        return self.action_upload_to_ml()
+
+    def _handle_upload_error(self, error_msg):
+        """Maneja errores de upload"""
+        self.write({
+            'upload_status': 'error',
+            'upload_error': error_msg
+        })
+        
+        # Crear log de error
+        self.env['mercadolibre.log'].create_log(
+            invoice_id=self.id,
+            status='error',
+            message=error_msg,
+            pack_id=self.pack_id
+        )
 
     def _get_legal_pdf_content(self):
         """
@@ -197,7 +239,6 @@ class AccountMove(models.Model):
             
             # MÉTODO 1: Usar el mismo flujo que la GUI
             try:
-                # Simular el flujo de la GUI que vemos en el log
                 pdf_content, _ = report._render_qweb_pdf([self.id])
                 
                 if pdf_content and len(pdf_content) > 1000:
@@ -209,7 +250,6 @@ class AccountMove(models.Model):
             
             # MÉTODO 2: Render directo (fallback)
             try:
-                # Usar render directo como alternativa
                 pdf_content, _ = report.render_qweb_pdf([self.id])
                 
                 if pdf_content and len(pdf_content) > 1000:
@@ -221,7 +261,6 @@ class AccountMove(models.Model):
             
             # MÉTODO 3: Con contexto específico
             try:
-                # Usar contexto como lo haría la GUI
                 context = dict(self.env.context)
                 context.update({
                     'report_xml_id': report.id,
@@ -247,10 +286,7 @@ class AccountMove(models.Model):
             return None
 
     def _is_valid_legal_pdf(self, pdf_content):
-        """
-        Validación SIMPLE y PRÁCTICA de PDF legal
-        No ser demasiado estricto para no bloquear PDFs válidos
-        """
+        """Validación SIMPLE y PRÁCTICA de PDF legal"""
         if not pdf_content:
             return False
         
@@ -321,7 +357,6 @@ class AccountMove(models.Model):
     def _extract_text_simple(self, pdf_content):
         """Extracción simple de texto sin dependencias complejas"""
         try:
-            # Intentar con PyPDF2 si está disponible
             try:
                 from PyPDF2 import PdfReader
                 pdf_file = io.BytesIO(pdf_content)
@@ -339,7 +374,6 @@ class AccountMove(models.Model):
             except ImportError:
                 # PyPDF2 no disponible, buscar texto directo en bytes
                 text_bytes = pdf_content.decode('latin-1', errors='ignore')
-                # Buscar patrones básicos
                 import re
                 text_matches = re.findall(r'[A-Za-z0-9\s]{10,}', text_bytes)
                 return ' '.join(text_matches[:100])  # Primeros 100 matches
@@ -394,7 +428,7 @@ class AccountMove(models.Model):
             _logger.error("❌ Upload exception: %s", error_msg)
             return {'success': False, 'error': error_msg}
 
-    # MÉTODOS DE DEBUGGING SIMPLES
+    # MÉTODOS DE TESTING SIMPLES
     def action_test_pdf_generation(self):
         """Test directo de generación de PDF"""
         self.ensure_one()
@@ -460,8 +494,6 @@ class AccountMove(models.Model):
         try:
             _logger.info("=== TESTING EXACT GUI REPORT FOR RECORD %s ===", self.id)
             
-            # El log muestra que funciona con record [7], vamos a ver cuál es el reporte activo
-            # Buscar reportes que tengan binding (aparecen en GUI)
             gui_reports = self.env['ir.actions.report'].search([
                 ('model', '=', 'account.move'),
                 ('binding_model_id', '!=', False),
@@ -477,10 +509,9 @@ class AccountMove(models.Model):
                 try:
                     _logger.info("Testing GUI report: %s (XML: %s)", report.name, report.report_name)
                     
-                    # Probar cada método
                     methods_tried = []
                     
-                    # Método 1: _render_qweb_pdf (que vimos en el log)
+                    # Método 1: _render_qweb_pdf
                     try:
                         pdf_content, _ = report._render_qweb_pdf([self.id])
                         if pdf_content and len(pdf_content) > 1000:
