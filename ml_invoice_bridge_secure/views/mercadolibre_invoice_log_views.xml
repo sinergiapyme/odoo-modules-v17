@@ -1,180 +1,137 @@
-<?xml version="1.0" encoding="utf-8"?>
-<odoo>
-    <!-- Tree View - CON todos los botones funcionando -->
-    <record id="view_mercadolibre_log_tree" model="ir.ui.view">
-        <field name="name">mercadolibre.log.tree</field>
-        <field name="model">mercadolibre.log</field>
-        <field name="arch" type="xml">
-            <tree string="Upload Logs" default_order="create_date desc" create="false">
-                <field name="create_date"/>
-                <field name="invoice_id"/>
-                <field name="pack_id"/>
-                <field name="status" 
-                       decoration-success="status == 'success'"
-                       decoration-danger="status == 'error'"/>
-                <field name="message"/>
-                <!-- Botones de acción funcionando -->
-                <button name="action_view_invoice" 
-                        type="object" 
-                        icon="fa-external-link" 
-                        title="View Invoice"
-                        invisible="invoice_id == False"/>
-                <button name="action_retry_upload" 
-                        type="object" 
-                        icon="fa-refresh" 
-                        title="Retry Upload"
-                        invisible="status == 'success' or invoice_id == False"
-                        confirm="¿Está seguro de reintentar la subida de esta factura?"/>
-            </tree>
-        </field>
-    </record>
+# -*- coding: utf-8 -*-
 
-    <!-- Form View - CON header buttons -->
-    <record id="view_mercadolibre_log_form" model="ir.ui.view">
-        <field name="name">mercadolibre.log.form</field>
-        <field name="model">mercadolibre.log</field>
-        <field name="arch" type="xml">
-            <form string="Upload Log" create="false" edit="false">
-                <header>
-                    <button name="action_view_invoice" 
-                            string="View Invoice" 
-                            type="object"
-                            class="btn-primary"
-                            invisible="invoice_id == False"/>
-                    <button name="action_retry_upload" 
-                            string="Retry Upload" 
-                            type="object"
-                            class="btn-secondary"
-                            invisible="status == 'success' or invoice_id == False"
-                            confirm="¿Está seguro de reintentar la subida de esta factura?"/>
-                </header>
-                <sheet>
-                    <group>
-                        <group string="Operation Details">
-                            <field name="create_date"/>
-                            <field name="invoice_id"/>
-                            <field name="pack_id"/>
-                            <field name="status"/>
-                        </group>
-                    </group>
-                    
-                    <group string="Message" invisible="message == False">
-                        <field name="message" nolabel="1"/>
-                    </group>
-                    
-                    <group string="MercadoLibre Response" invisible="ml_response == False">
-                        <field name="ml_response" nolabel="1" widget="ace" options="{'mode': 'json'}"/>
-                    </group>
-                </sheet>
-            </form>
-        </field>
-    </record>
+from odoo import api, fields, models, _
+from odoo.exceptions import UserError
 
-    <!-- Search View - SIN referencias problemáticas -->
-    <record id="view_mercadolibre_log_search" model="ir.ui.view">
-        <field name="name">mercadolibre.log.search</field>
-        <field name="model">mercadolibre.log</field>
-        <field name="arch" type="xml">
-            <search string="Upload Logs">
-                <field name="invoice_id"/>
-                <field name="pack_id"/>
-                <field name="message"/>
-                
-                <!-- Filtros básicos SEGUROS -->
-                <filter string="Success" name="filter_success" domain="[('status', '=', 'success')]"/>
-                <filter string="Errors" name="filter_errors" domain="[('status', '=', 'error')]"/>
-                
-                <separator/>
-                
-                <!-- Filtros de fecha -->
-                <filter string="Today" name="filter_today" 
-                        domain="[('create_date', '&gt;=', datetime.datetime.combine(context_today(), datetime.time(0,0,0)))]"/>
-                <filter string="This Week" name="filter_week" 
-                        domain="[('create_date', '&gt;=', (context_today() - datetime.timedelta(days=7)).strftime('%Y-%m-%d'))]"/>
-                
-                <!-- Agrupaciones -->
-                <group expand="0" string="Group By">
-                    <filter string="Status" name="group_by_status" context="{'group_by': 'status'}"/>
-                    <filter string="Date" name="group_by_date" context="{'group_by': 'create_date:day'}"/>
-                    <filter string="Invoice" name="group_by_invoice" context="{'group_by': 'invoice_id'}"/>
-                </group>
-            </search>
-        </field>
-    </record>
+class MercadoLibreLog(models.Model):
+    _name = 'mercadolibre.log'
+    _description = 'MercadoLibre Operation Log'
+    _order = 'create_date desc'
+    _rec_name = 'display_name'
 
-    <!-- Action principal -->
-    <record id="action_mercadolibre_log" model="ir.actions.act_window">
-        <field name="name">Upload Logs</field>
-        <field name="res_model">mercadolibre.log</field>
-        <field name="view_mode">tree,form</field>
-        <field name="context">{'search_default_filter_errors': 1}</field>
-        <field name="help" type="html">
-            <p class="o_view_nocontent_smiling_face">
-                No upload logs yet
-            </p>
-            <p>
-                Upload logs will appear here when you start uploading invoices to MercadoLibre.
-                Both successful uploads and errors will be logged for auditing purposes.
-            </p>
-        </field>
-    </record>
+    display_name = fields.Char(string='Name', compute='_compute_display_name', store=True)
+    invoice_id = fields.Many2one('account.move', string='Invoice', required=True, ondelete='cascade')
+    ml_pack_id = fields.Char(string='Pack ID')
+    status = fields.Selection([('success', 'Success'), ('error', 'Error')], string='Status', required=True)
+    message = fields.Text(string='Message')
+    ml_response = fields.Text(string='ML Response')
 
-    <!-- Action para retry en bulk -->
-    <record id="action_retry_upload_bulk" model="ir.actions.server">
-        <field name="name">Retry Upload</field>
-        <field name="model_id" ref="model_mercadolibre_log"/>
-        <field name="binding_model_id" ref="model_mercadolibre_log"/>
-        <field name="binding_view_types">list</field>
-        <field name="state">code</field>
-        <field name="code">action = records.action_retry_upload_bulk()</field>
-    </record>
+    @api.depends('invoice_id', 'status')
+    def _compute_display_name(self):
+        for log in self:
+            if log.invoice_id:
+                log.display_name = f"{log.invoice_id.name} - {log.status.title()}"
+            else:
+                log.display_name = f"Log - {log.status.title()}"
 
-    <!-- Vista heredada CORREGIDA - SOLO campos que existen -->
-    <record id="view_account_move_form_inherit_ml_testing" model="ir.ui.view">
-        <field name="name">account.move.form.inherit.ml.testing</field>
-        <field name="model">account.move</field>
-        <field name="inherit_id" ref="account.view_move_form"/>
-        <field name="arch" type="xml">
-            <xpath expr="//header" position="inside">
-                <!-- CORREGIDO: usar pack_id (NO ml_pack_id) -->
-                <button name="action_upload_to_ml" 
-                        type="object" 
-                        string="Upload to ML" 
-                        class="btn-primary"
-                        attrs="{'invisible': [('pack_id', '=', False)]}"
-                        confirm="¿Está seguro de subir esta factura a MercadoLibre?"/>
-                
-                <!-- Botones de testing (solo para administradores) -->
-                <button name="action_test_pdf_generation" 
-                        type="object" 
-                        string="Test PDF Generation" 
-                        class="btn-secondary"
-                        groups="base.group_no_one"/>
-                
-                <button name="action_test_with_working_record" 
-                        type="object" 
-                        string="Test Working Record" 
-                        class="btn-secondary"
-                        groups="base.group_no_one"/>
-                
-                <button name="action_debug_available_reports" 
-                        type="object" 
-                        string="Debug Reports" 
-                        class="btn-secondary"
-                        groups="base.group_no_one"/>
-                
-                <button name="action_test_exact_gui_report" 
-                        type="object" 
-                        string="Test GUI Reports" 
-                        class="btn-secondary"
-                        groups="base.group_no_one"/>
-            </xpath>
+    @api.model
+    def create_log(self, invoice_id, status, message, **kwargs):
+        return self.create({
+            'invoice_id': invoice_id,
+            'status': status,
+            'message': message,
+            'ml_pack_id': kwargs.get('ml_pack_id'),
+            'ml_response': kwargs.get('ml_response'),
+        })
+
+    def action_view_invoice(self):
+        """Abrir la factura relacionada al log"""
+        self.ensure_one()
+        
+        if not self.invoice_id:
+            raise UserError(_('No hay factura asociada a este log'))
+        
+        return {
+            'type': 'ir.actions.act_window',
+            'name': _('Invoice: %s') % self.invoice_id.name,
+            'view_mode': 'form',
+            'res_model': 'account.move',
+            'res_id': self.invoice_id.id,
+            'target': 'current',
+            'context': {
+                'default_move_type': self.invoice_id.move_type,
+            }
+        }
+
+    def action_retry_upload(self):
+        """Reintentar upload de la factura desde el log"""
+        self.ensure_one()
+        
+        # Validaciones básicas
+        if not self.invoice_id:
+            raise UserError(_('No hay factura asociada a este log'))
+        
+        if self.status == 'success':
+            raise UserError(_('Esta factura ya fue subida exitosamente'))
+        
+        if self.invoice_id.state != 'posted':
+            raise UserError(_('Solo se pueden subir facturas validadas'))
+        
+        # CORREGIDO: usar campos que existen
+        if not self.invoice_id.is_ml_sale:
+            raise UserError(_('Esta factura no es de MercadoLibre'))
+        
+        if self.invoice_id.ml_uploaded:
+            raise UserError(_('Esta factura ya está marcada como subida'))
+        
+        try:
+            # CORREGIDO: llamar al método que existe
+            result = self.invoice_id.action_upload_to_ml()
             
-            <!-- CORREGIDO: Solo campos que existen en el modelo -->
-            <xpath expr="//field[@name='ref']" position="after">
-                <field name="pack_id" string="ML Pack ID" help="MercadoLibre Pack ID"/>
-                <field name="is_ml_sale" string="ML Sale" help="Marca si es venta de MercadoLibre"/>
-            </xpath>
-        </field>
-    </record>
-</odoo>
+            # Si llegamos aquí, el upload fue exitoso
+            # El método action_upload_to_ml ya crea su propio log de éxito
+            
+            # Actualizar status del log actual para marcarlo como "retry successful"
+            self.write({
+                'status': 'success',
+                'message': _('Retry successful: %s') % (result.get('params', {}).get('message', 'Upload completed'))
+            })
+            
+            # Retornar el mismo resultado que el upload original
+            return result
+            
+        except UserError as e:
+            # Error controlado - actualizamos el log actual
+            self.write({
+                'message': _('Retry failed: %s') % str(e)
+            })
+            # Re-lanzar el error para que se muestre al usuario
+            raise
+            
+        except Exception as e:
+            # Error inesperado - actualizamos el log actual  
+            error_msg = _('Retry failed with unexpected error: %s') % str(e)
+            self.write({
+                'message': error_msg
+            })
+            raise UserError(error_msg)
+
+    def action_retry_upload_bulk(self):
+        """Reintentar upload de múltiples logs seleccionados"""
+        failed_logs = self.filtered(lambda l: l.status == 'error')
+        
+        if not failed_logs:
+            raise UserError(_('No hay logs con errores seleccionados'))
+        
+        success_count = 0
+        error_count = 0
+        
+        for log in failed_logs:
+            try:
+                log.action_retry_upload()
+                success_count += 1
+            except Exception:
+                error_count += 1
+                continue  # Continuar con el siguiente
+        
+        message = _('Retry completed: %d successful, %d failed') % (success_count, error_count)
+        
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'title': _('Bulk Retry Results'),
+                'message': message,
+                'type': 'success' if success_count > 0 else 'warning'
+            }
+        }
