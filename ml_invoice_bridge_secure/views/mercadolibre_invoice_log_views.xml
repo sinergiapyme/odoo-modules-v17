@@ -70,7 +70,7 @@
         </field>
     </record>
 
-    <!-- Search View - CON filtros mejorados -->
+    <!-- Search View - CON filtros CORREGIDOS -->
     <record id="view_mercadolibre_log_search" model="ir.ui.view">
         <field name="name">mercadolibre.log.search</field>
         <field name="model">mercadolibre.log</field>
@@ -96,11 +96,11 @@
                 
                 <separator/>
                 
-                <!-- Filtros de estado de factura -->
-                <filter string="Pending Upload" name="filter_pending" 
-                        domain="[('status', '=', 'error'), ('invoice_id.ml_uploaded', '=', False)]"/>
-                <filter string="Already Uploaded" name="filter_uploaded" 
-                        domain="[('invoice_id.ml_uploaded', '=', True)]"/>
+                <!-- Filtros de estado CORREGIDOS - SIN referencias a ml_uploaded -->
+                <filter string="Pending/Error Upload" name="filter_pending" 
+                        domain="[('status', '=', 'error')]"/>
+                <filter string="Successfully Uploaded" name="filter_uploaded" 
+                        domain="[('status', '=', 'success')]"/>
                 
                 <!-- Agrupaciones -->
                 <group expand="0" string="Group By">
@@ -144,5 +144,56 @@
         <field name="binding_view_types">list</field>
         <field name="state">code</field>
         <field name="code">action = records.action_retry_upload_bulk()</field>
+    </record>
+
+    <!-- Vista heredada para agregar botones de testing a facturas -->
+    <record id="view_account_move_form_inherit_ml_testing" model="ir.ui.view">
+        <field name="name">account.move.form.inherit.ml.testing</field>
+        <field name="model">account.move</field>
+        <field name="inherit_id" ref="account.view_move_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//header" position="inside">
+                <!-- Botón principal de upload -->
+                <button name="action_upload_to_ml" 
+                        type="object" 
+                        string="Upload to ML" 
+                        class="btn-primary"
+                        attrs="{'invisible': [('pack_id', '=', False)]}"
+                        confirm="¿Está seguro de subir esta factura a MercadoLibre?"/>
+                
+                <!-- Botones de testing (solo para administradores) -->
+                <button name="action_test_pdf_generation" 
+                        type="object" 
+                        string="Test PDF Generation" 
+                        class="btn-secondary"
+                        groups="base.group_no_one"/>
+                
+                <button name="action_test_with_working_record" 
+                        type="object" 
+                        string="Test Working Record" 
+                        class="btn-secondary"
+                        groups="base.group_no_one"/>
+                
+                <button name="action_debug_available_reports" 
+                        type="object" 
+                        string="Debug Reports" 
+                        class="btn-secondary"
+                        groups="base.group_no_one"/>
+                
+                <button name="action_test_exact_gui_report" 
+                        type="object" 
+                        string="Test GUI Reports" 
+                        class="btn-secondary"
+                        groups="base.group_no_one"/>
+            </xpath>
+            
+            <!-- Agregar campos ML si no existen -->
+            <xpath expr="//field[@name='ref']" position="after">
+                <field name="pack_id" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
+                <field name="upload_status" readonly="1" attrs="{'invisible': [('upload_status', '=', False)]}"/>
+                <field name="last_upload_attempt" readonly="1" attrs="{'invisible': [('last_upload_attempt', '=', False)]}"/>
+                <field name="upload_error" readonly="1" attrs="{'invisible': [('upload_error', '=', False)]}"/>
+            </xpath>
+        </field>
     </record>
 </odoo>
