@@ -1,15 +1,64 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
     <data noupdate="1">
-        <record id="cron_upload_ml_invoices" model="ir.cron">
-            <field name="name">MercadoLibre: Auto Upload Invoices</field>
+        
+        <!-- Cron para auto-upload de facturas ML (opcional) -->
+        <record id="cron_auto_upload_ml_invoices" model="ir.cron">
+            <field name="name">Auto Upload ML Invoices</field>
             <field name="model_id" ref="account.model_account_move"/>
             <field name="state">code</field>
-            <field name="code">env['account.move'].cron_upload_ml_invoices()</field>
-            <field name="interval_number">30</field>
+            <field name="code">
+# Auto upload para facturas ML pendientes
+config = env['mercadolibre.config'].get_active_config()
+if config and config.auto_upload:
+    pending_invoices = env['account.move'].search([
+        ('is_ml_sale', '=', True),
+        ('ml_uploaded', '=', False),
+        ('state', '=', 'posted'),
+        ('pack_id', '!=', False)
+    ], limit=10)  # Procesar máximo 10 por vez
+    
+    for invoice in pending_invoices:
+        try:
+            invoice.action_upload_to_ml()
+        except Exception as e:
+            # Log error pero continuar con la siguiente
+            env['mercadolibre.log'].create_log(
+                invoice_id=invoice.id,
+                status='error',
+                message=f'Auto upload failed: {str(e)}',
+                pack_id=invoice.pack_id
+            )
+            continue
+            </field>
+            <field name="interval_number">5</field>
             <field name="interval_type">minutes</field>
             <field name="numbercall">-1</field>
-            <field name="active">False</field>
+            <field name="active">False</field>  <!-- Desactivado por defecto -->
+            <field name="user_id" ref="base.user_root"/>
         </record>
+
+        <!-- Cron para limpiar logs antiguos -->
+        <record id="cron_cleanup_old_logs" model="ir.cron">
+            <field name="name">Cleanup Old ML Logs</field>
+            <field name="model_id" ref="model_mercadolibre_log"/>
+            <field name="state">code</field>
+            <field name="code">
+# Eliminar logs de más de 90 días
+from datetime import datetime, timedelta
+cutoff_date = datetime.now() - timedelta(days=90)
+old_logs = env['mercadolibre.log'].search([
+    ('create_date', '<', cutoff_date)
+])
+if old_logs:
+    old_logs.unlink()
+            </field>
+            <field name="interval_number">1</field>
+            <field name="interval_type">days</field>
+            <field name="numbercall">-1</field>
+            <field name="active">False</field>  <!-- Desactivado por defecto -->
+            <field name="user_id" ref="base.user_root"/>
+        </record>
+
     </data>
 </odoo>
