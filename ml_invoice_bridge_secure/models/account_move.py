@@ -128,6 +128,39 @@ class AccountMove(models.Model):
         except:
             return default
 
+    def _calculate_line_tax_amount(self, line):
+        """Calcula el monto de impuesto de una línea de forma segura"""
+        try:
+            # Primero intentar usar price_tax si está disponible
+            if hasattr(line, 'price_tax') and line.price_tax is not None:
+                return line.price_tax
+            
+            # Si no, intentar calcular desde price_total y price_subtotal
+            if hasattr(line, 'price_total') and hasattr(line, 'price_subtotal'):
+                if line.price_total is not None and line.price_subtotal is not None:
+                    return line.price_total - line.price_subtotal
+            
+            # Como último recurso, intentar compute_all si tax_ids existe
+            if hasattr(line, 'tax_ids') and line.tax_ids:
+                try:
+                    taxes_data = line.tax_ids.compute_all(
+                        line.price_unit,
+                        quantity=line.quantity,
+                        currency=self.currency_id,
+                        product=line.product_id,
+                        partner=self.partner_id
+                    )
+                    return taxes_data['total_included'] - taxes_data['total_excluded']
+                except Exception as e:
+                    _logger.warning(f"Could not compute taxes for line: {e}")
+                    
+            # Si todo falla, retornar 0 (sin impuestos)
+            return 0.0
+            
+        except Exception as e:
+            _logger.error(f"Error calculating tax amount: {e}")
+            return 0.0
+
     def _generate_exact_invoice_html(self):
         """Genera HTML que replica EXACTAMENTE el formato de la factura argentina"""
         
@@ -140,6 +173,9 @@ class AccountMove(models.Model):
         doc_letter = self._get_safe_field(self, 'l10n_latam_document_type_id.l10n_ar_letter', 'B')
         doc_type_name = self._get_safe_field(self, 'l10n_latam_document_type_id.name', 'FACTURA')
         doc_type_code = self._get_safe_field(self, 'l10n_latam_document_type_id.code', '06')
+        
+        # IMPORTANTE: Determinar si es factura A o B para el manejo de precios
+        is_invoice_a = doc_letter == 'A'
         
         # Número de documento formateado
         pos_number = self._get_safe_field(self, 'journal_id.l10n_ar_afip_pos_number', 1)
@@ -172,15 +208,20 @@ class AccountMove(models.Model):
         # Total en palabras
         total_words = self._num_to_words(self.amount_total)
         
-        # IVA contenido (21% del total para consumidor final)
-        iva_contenido = self.amount_total * 0.21 / 1.21
+        # IVA contenido - usar el campo amount_tax si está disponible
+        if hasattr(self, 'amount_tax') and self.amount_tax:
+            iva_contenido = self.amount_tax
+        else:
+            # Sumar los impuestos de todas las líneas
+            iva_contenido = sum(self._calculate_line_tax_amount(line) for line in self.invoice_line_ids)
         
         # Generar URL del QR
         qr_url = self._get_afip_qr_url_safe()
         
-        # Construir líneas de productos - VERSIÓN DIRECTA Y EFICIENTE
+        # Construir líneas de productos - VERSIÓN MEJORADA PARA FACTURAS A/B
         items_html = ""
         _logger.info(f"Processing invoice lines for {self.name}. Total lines: {len(self.invoice_line_ids)}")
+        _logger.info(f"Invoice type: {doc_letter} ({'Without taxes' if is_invoice_a else 'With taxes included'})")
         
         for line in self.invoice_line_ids:
             # Solo procesar líneas con cantidad y precio
@@ -195,11 +236,43 @@ class AccountMove(models.Model):
                 if not product_name and line.product_id:
                     product_name = line.product_id.name or 'Producto'
                 
+                # Determinar qué campos usar según el tipo de factura
+                if is_invoice_a:
+                    # Factura A: mostrar precios sin impuestos
+                    price_to_show = line.price_unit
+                    subtotal_to_show = line.price_subtotal
+                else:
+                    # Factura B: mostrar precios con impuestos incluidos
+                    # Primero intentar usar los campos con impuestos si están disponibles
+                    if hasattr(line, 'price_total') and line.price_total:
+                        subtotal_to_show = line.price_total
+                        # Calcular precio unitario con impuestos
+                        price_to_show = line.price_total / line.quantity if line.quantity else line.price_unit
+                    else:
+                        # Fallback: calcular usando los impuestos reales de la línea
+                        tax_amount = self._calculate_line_tax_amount(line)
+                        subtotal_to_show = line.price_subtotal + tax_amount
+                        
+                        # Calcular precio unitario con impuestos
+                        if line.quantity:
+                            price_to_show = (line.price_unit * line.quantity + tax_amount) / line.quantity
+                        else:
+                            price_to_show = line.price_unit
+                    
+                    # Log para debugging
+                    tax_info = ""
+                    if hasattr(line, 'tax_ids') and line.tax_ids:
+                        tax_names = ', '.join(tax.name for tax in line.tax_ids)
+                        tax_info = f" (Taxes: {tax_names})"
+                        
+                    _logger.info(f"Line B invoice: {line.product_id.name if line.product_id else 'N/A'}{tax_info}, "
+                                f"subtotal_excl={line.price_subtotal}, subtotal_incl={subtotal_to_show}")
+                
                 # Formatear valores
                 quantity = format_number(line.quantity)
                 uom = line.product_uom_id.name if line.product_uom_id else 'Un'
-                price = format_number(line.price_unit)
-                subtotal = format_number(line.price_subtotal)
+                price = format_number(price_to_show)
+                subtotal = format_number(subtotal_to_show)
                 
                 # Agregar línea al HTML
                 items_html += f"""
@@ -210,6 +283,10 @@ class AccountMove(models.Model):
                     <td class="text-right">$ {subtotal}</td>
                 </tr>
                 """
+                
+                _logger.info(f"Line processed: {product_name}, qty={line.quantity}, "
+                            f"price_unit={line.price_unit}, price_shown={price_to_show}, "
+                            f"subtotal_shown={subtotal_to_show}")
         
         # Si no hay líneas, agregar mensaje
         if not items_html:
@@ -558,11 +635,11 @@ class AccountMove(models.Model):
         </div>
     </div>
     
-    <!-- Régimen de transparencia -->
-    <div class="transparencia-box">
+    <!-- Régimen de transparencia - Solo para facturas B -->
+    {f'''<div class="transparencia-box">
         <strong>Régimen de Transparencia Fiscal al Consumidor (Ley 27.743)</strong><br>
         IVA Contenido $ {format_number(iva_contenido)}
-    </div>
+    </div>''' if not is_invoice_a else ''}
     
     <!-- Términos -->
     <div style="margin: 10px 0;">
@@ -744,7 +821,7 @@ class AccountMove(models.Model):
         except Exception as e:
             _logger.warning(f"Error generating QR URL: {e}")
             # URL del QR de la factura de ejemplo
-            return "https://www.afip.gob.ar/fe/qr/?p=eyJ2ZXIiOiAxLCAiZmVjaGEiOiAiMjAyNS0wNy0xMCIsICJjdWl0IjogMzA3MTY3MzQ0NDMsICJwdG9WdGEiOiAxLCAidGlwb0NtcCI6IDYsICJucm9DbXAiOiAzMDUsICJpbXBvcnRlIjogMzU5MC4wLCAibW9uZWRhIjogIlBFUyIsICJjdHoiOiAxLjAsICJ0aXBvQ29kQXV0IjogIkUiLCAiY29kQXV0IjogNzUyODM4OTUwMTEzNjIsICJ0aXBvRG9jUmVjIjogOTYsICJucm9Db2RSZWMiOiAzMTU1NjEwM30="
+            return "https://www.afip.gob.ar/fe/qr/?p=eyJ2ZXIiOiAxLCAiZmVjaGEiOiAiMjAyNS0wNy0xMCIsICJjdWl0IjogMzA3MTY3MzQ0NDMsICJwdG9WdGEiOiAxLCAidGlwb0NtcCI6IDYsICJucm9DbXAiOiAzMDUsICJpbXBvcnRlIjogMzU5MC4wLCAibW9uZWRhIjogIlBFUyIsICJjdHoiOiAxLjAsICJ0aXBvQ29kQXV0IjogIkUiLCAiY29kQXV0IjogNzUyODM4OTUwMTEzNjIsICJ0aXBvRG9jUmVjIjogOTYsICJucm9Eb2NSZWMiOiAzMTU1NjEwM30="
 
     def _handle_upload_error(self, error_msg):
         """Maneja errores de upload"""
