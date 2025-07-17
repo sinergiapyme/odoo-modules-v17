@@ -1188,6 +1188,50 @@ class AccountMove(models.Model):
                 'sticky': True,
             }
         }
+        
+    def action_fix_ml_data_from_sale_orders(self):
+        """Intenta corregir datos ML desde Sale Orders vinculadas"""
+        fixed_count = 0
+        for record in self:
+            if record.is_ml_sale or not record.invoice_origin:
+                continue
+                
+            # Buscar sale order
+            sale_order = self.env['sale.order'].search([
+                ('name', '=', record.invoice_origin)
+            ], limit=1)
+            
+            if sale_order and sale_order.is_ml_sale:
+                update_vals = {
+                    'is_ml_sale': True,
+                    'ml_pack_id': sale_order.ml_pack_id,
+                }
+                
+                # También corregir períodos AFIP si es necesario
+                if not record.afip_associated_period_from:
+                    has_services = any(
+                        line.product_id and line.product_id.type == 'service' 
+                        for line in record.invoice_line_ids
+                    )
+                    if has_services:
+                        update_vals.update({
+                            'afip_associated_period_from': record.invoice_date or fields.Date.today(),
+                            'afip_associated_period_to': record.invoice_date or fields.Date.today(),
+                        })
+                
+                record.write(update_vals)
+                fixed_count += 1
+                _logger.info('Fixed ML data for invoice %s', record.name)
+        
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'title': '%d Facturas Corregidas' % fixed_count,
+                'message': 'Se corrigieron los datos ML de %d facturas' % fixed_count,
+                'type': 'success' if fixed_count > 0 else 'info'
+            }
+        }
 
     # Compatibilidad
     def action_upload_to_mercadolibre(self):
