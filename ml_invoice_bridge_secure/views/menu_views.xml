@@ -18,10 +18,15 @@
               action="action_mercadolibre_log" 
               sequence="20"/>
     
-    <!-- CORREGIDO: referencia a acción que existe -->
     <menuitem id="menu_mercadolibre_invoices" 
               name="ML Invoices" 
               parent="menu_mercadolibre_main" 
               action="action_invoice_ml_sales" 
               sequence="30"/>
+              
+    <menuitem id="menu_sale_orders_ml" 
+              name="ML Sale Orders" 
+              parent="menu_mercadolibre_main" 
+              action="action_sale_orders_ml" 
+              sequence="40"/>
 </odoo>
