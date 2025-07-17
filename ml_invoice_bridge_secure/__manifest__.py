@@ -24,16 +24,9 @@
         * Odoo v17 Community Edition
         * Localización Argentina de ADHOC
         * ODUMBO (sincronización de ventas ML)
-        
-        Casos de uso soportados:
-        * Facturas individuales desde Sale Order
-        * Facturas en lote desde múltiples Sale Orders
-        * Corrección automática de datos faltantes
-        * Upload manual y automático a MercadoLibre
-        * Monitoreo y auditoría completa
     ''',
     'author': 'Sinergia Pyme SAS',
-    'website': 'https://github.com/tu-usuario/ml_invoice_bridge_secure',
+    'website': 'https://github.com/sinergiapyme/odoo-modules-v17',
     'license': 'LGPL-3',
     'depends': [
         'base',
@@ -49,9 +42,9 @@
         # Data
         'data/cron_data.xml',
         
-        # Views
+        # Views - NOMBRES CORREGIDOS SEGÚN TU GITHUB
         'views/mercadolibre_config_views.xml',
-        'views/mercadolibre_log_views.xml',
+        'views/mercadolibre_invoice_log_views.xml',
         'views/account_move_views.xml',
         'views/sale_order_views.xml',
         'views/menu_views.xml',
