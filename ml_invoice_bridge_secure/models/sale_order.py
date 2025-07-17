@@ -58,7 +58,7 @@ class SaleOrder(models.Model):
             return {'is_ml_sale': True, 'ml_pack_id': False}
             
         except Exception as e:
-            _logger.error(f"Error extracting ML data from origin '{origin_text}': {str(e)}")
+            _logger.error(f"Error ensuring ML data and AFIP periods transfer: {str(e)}")logger.error(f"Error extracting ML data from origin '{origin_text}': {str(e)}")
             return {'is_ml_sale': False, 'ml_pack_id': False}
     
     @api.model
