@@ -7,9 +7,6 @@
             <field name="model_id" ref="account.model_account_move"/>
             <field name="state">code</field>
             <field name="code">
-import time
-from datetime import datetime, timedelta
-
 config = env['mercadolibre.config'].get_active_config()
 
 if not config:
@@ -29,21 +26,6 @@ if not config.auto_upload:
         'ml_pack_id': False  
     })
     raise Exception("Auto upload disabled")
-
-recent_errors = env['mercadolibre.log'].search([
-    ('status', '=', 'error'),
-    ('create_date', '&gt;=', datetime.now() - timedelta(hours=1)),
-    ('message', 'ilike', 'cron')
-], count=True)
-
-if recent_errors >= 5:
-    env['mercadolibre.log'].create({
-        'invoice_id': False,
-        'status': 'error',
-        'message': 'Cron stopped: Circuit breaker activated',
-        'ml_pack_id': False
-    })
-    raise Exception("Circuit breaker activated")
 
 pending_invoices = env['account.move'].search([
     ('is_ml_sale', '=', True),
@@ -65,9 +47,6 @@ error_count = 0
 
 for invoice in pending_invoices:
     try:
-        if success_count > 0:
-            time.sleep(5)
-        
         if not invoice.ml_pack_id or not invoice.is_ml_sale or invoice.state != 'posted':
             error_count += 1
             continue
@@ -114,13 +93,8 @@ env['mercadolibre.log'].create({
             <field name="model_id" ref="account.model_account_move"/>
             <field name="state">code</field>
             <field name="code">
-from datetime import datetime, timedelta
-
 try:
-    recent_date = datetime.now() - timedelta(days=7)
-    
     invoices_to_fix = env['account.move'].search([
-        ('create_date', '&gt;=', recent_date),
         ('move_type', 'in', ['out_invoice', 'out_refund']),
         ('state', '!=', 'cancel'),
         ('is_ml_sale', '=', False),
@@ -130,7 +104,7 @@ try:
         ('invoice_origin', 'ilike', 'mercado libre'),
         ('invoice_origin', 'ilike', 'ml order'),
         ('invoice_origin', 'ilike', 'ml_'),
-    ], limit=10)
+    ], limit=5)
     
     fixed_count = 0
     for invoice in invoices_to_fix:
