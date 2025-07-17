@@ -8,7 +8,7 @@ import logging
 import re
 import requests
 import gc
-import sys
+#import sys
 from contextlib import contextmanager
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError, AccessError
