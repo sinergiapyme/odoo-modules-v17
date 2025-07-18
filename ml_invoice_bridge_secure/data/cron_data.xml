@@ -37,7 +37,7 @@ try:
         ('state', '=', 'posted'),
         ('ml_pack_id', '!=', False),
         ('ml_pack_id', '!=', ''),
-    ], limit=2)  # Procesamiento conservador
+    ], limit=50)  # Procesamiento conservador
 
     # 3. LOG INICIO DE EJECUCIÓN
     env['mercadolibre.log'].create_cron_log(
