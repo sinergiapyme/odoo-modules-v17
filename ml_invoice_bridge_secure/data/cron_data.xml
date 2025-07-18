@@ -2,83 +2,108 @@
 <odoo>
     <data noupdate="1">
         
+        <!-- CRON PRINCIPAL: Auto Upload ML Invoices -->
         <record id="cron_auto_upload_ml_invoices" model="ir.cron">
             <field name="name">Auto Upload ML Invoices</field>
             <field name="model_id" ref="account.model_account_move"/>
             <field name="state">code</field>
             <field name="code">
-config = env['mercadolibre.config'].get_active_config()
+# =============================================================================
+# CRON AUTO-UPLOAD ML INVOICES - VERSIÓN CORREGIDA
+# =============================================================================
 
-if not config:
-    env['mercadolibre.log'].create({
-        'invoice_id': False,
-        'status': 'error', 
-        'message': 'Cron stopped: No active MercadoLibre configuration found',
-        'ml_pack_id': False
-    })
-    raise Exception("No active ML config")
+try:
+    # 1. VERIFICAR CONFIGURACIÓN
+    config = env['mercadolibre.config'].get_active_config()
 
-if not config.auto_upload:
-    env['mercadolibre.log'].create({
-        'invoice_id': False,
-        'status': 'error',
-        'message': 'Cron stopped: Auto upload disabled in MercadoLibre config',
-        'ml_pack_id': False  
-    })
-    raise Exception("Auto upload disabled")
-
-pending_invoices = env['account.move'].search([
-    ('is_ml_sale', '=', True),
-    ('ml_uploaded', '=', False),
-    ('state', '=', 'posted'),
-    ('ml_pack_id', '!=', False),
-    ('ml_pack_id', '!=', ''),
-], limit=2)
-
-env['mercadolibre.log'].create({
-    'invoice_id': False,
-    'status': 'success',
-    'message': 'Cron execution started',
-    'ml_pack_id': False
-})
-
-success_count = 0
-error_count = 0
-
-for invoice in pending_invoices:
-    try:
-        if not invoice.ml_pack_id or not invoice.is_ml_sale or invoice.state != 'posted':
-            error_count += 1
-            continue
-        
-        result = invoice.action_upload_to_mercadolibre()
-        success_count += 1
-        
-        env['mercadolibre.log'].create_log(
-            invoice_id=invoice.id,
-            status='success',
-            message='Cron auto upload successful',
-            ml_pack_id=invoice.ml_pack_id
+    if not config:
+        env['mercadolibre.log'].create_cron_log(
+            status='error', 
+            message='Cron stopped: No active MercadoLibre configuration found'
         )
-        
-    except Exception as e:
-        error_count += 1
-        env['mercadolibre.log'].create_log(
-            invoice_id=invoice.id,
+        raise Exception("No active ML config")
+
+    if not config.auto_upload:
+        env['mercadolibre.log'].create_cron_log(
             status='error',
-            message='Cron auto upload failed',
-            ml_pack_id=invoice.ml_pack_id or 'N/A'
+            message='Cron stopped: Auto upload disabled in MercadoLibre config'
         )
-        
-        if error_count >= 2:
-            break
+        raise Exception("Auto upload disabled")
 
-env['mercadolibre.log'].create({
-    'invoice_id': False,
-    'status': 'success' if error_count == 0 else 'error',
-    'message': 'Cron execution completed',
-    'ml_pack_id': False
-})
+    # 2. BUSCAR FACTURAS PENDIENTES (límite conservador)
+    pending_invoices = env['account.move'].search([
+        ('is_ml_sale', '=', True),
+        ('ml_uploaded', '=', False),
+        ('state', '=', 'posted'),
+        ('ml_pack_id', '!=', False),
+        ('ml_pack_id', '!=', ''),
+    ], limit=2)  # Procesamiento conservador
+
+    # 3. LOG INICIO DE EJECUCIÓN
+    env['mercadolibre.log'].create_cron_log(
+        status='success',
+        message='Cron execution started - Found %d pending invoices' % len(pending_invoices)
+    )
+
+    # 4. PROCESAR FACTURAS
+    success_count = 0
+    error_count = 0
+
+    for invoice in pending_invoices:
+        try:
+            # Validación de integridad
+            if not invoice.ml_pack_id or not invoice.is_ml_sale or invoice.state != 'posted':
+                env['mercadolibre.log'].create_log(
+                    invoice_id=invoice.id,
+                    status='error',
+                    message='Cron skipped: Invoice failed integrity check',
+                    ml_pack_id=invoice.ml_pack_id or 'N/A'
+                )
+                error_count += 1
+                continue
+            
+            # Intentar upload usando método correcto
+            result = invoice.action_upload_to_ml()
+            success_count += 1
+            
+            # Log éxito específico
+            env['mercadolibre.log'].create_log(
+                invoice_id=invoice.id,
+                status='success',
+                message='Cron auto upload successful',
+                ml_pack_id=invoice.ml_pack_id
+            )
+            
+        except Exception as e:
+            error_count += 1
+            env['mercadolibre.log'].create_log(
+                invoice_id=invoice.id,
+                status='error',
+                message='Cron auto upload failed: %s' % str(e),
+                ml_pack_id=invoice.ml_pack_id or 'N/A'
+            )
+            
+            # Parar si hay muchos errores consecutivos
+            if error_count >= 2:
+                env['mercadolibre.log'].create_cron_log(
+                    status='error',
+                    message='Cron stopped after %d consecutive errors for safety' % error_count
+                )
+                break
+
+    # 5. LOG RESUMEN FINAL
+    env['mercadolibre.log'].create_cron_log(
+        status='success' if error_count == 0 else 'error',
+        message='Cron execution completed - Success: %d, Errors: %d' % (success_count, error_count)
+    )
+
+except Exception as e:
+    # 6. LOG ERROR CRÍTICO
+    env['mercadolibre.log'].create_cron_log(
+        status='error',
+        message='Critical cron error: %s' % str(e)
+    )
+    raise
             </field>
             <field name="interval_number">30</field>
             <field name="interval_type">minutes</field>
@@ -88,12 +113,18 @@ env['mercadolibre.log'].create({
             <field name="priority">10</field>
         </record>
 
+        <!-- CRON SECUNDARIO: Fix Missing ML Data -->
         <record id="cron_fix_ml_data_invoices" model="ir.cron">
             <field name="name">Fix Missing ML Data in Invoices</field>
             <field name="model_id" ref="account.model_account_move"/>
             <field name="state">code</field>
             <field name="code">
+# =============================================================================
+# CRON FIX ML DATA - VERSIÓN CORREGIDA
+# =============================================================================
+
 try:
+    # 1. BUSCAR FACTURAS CON DATOS ML FALTANTES
     invoices_to_fix = env['account.move'].search([
         ('move_type', 'in', ['out_invoice', 'out_refund']),
         ('state', '!=', 'cancel'),
@@ -106,31 +137,31 @@ try:
         ('invoice_origin', 'ilike', 'ml_'),
     ], limit=5)
     
+    # 2. INTENTAR CORRECCIÓN
     fixed_count = 0
     for invoice in invoices_to_fix:
         try:
-            ml_data = invoice._auto_detect_ml_from_origin_and_lines()
-            if ml_data.get('is_ml_sale'):
-                invoice.write(ml_data)
+            # Usar método de corrección existente
+            result = invoice.action_fix_ml_data_from_sale_orders()
+            if result and result.get('params', {}).get('title', '').startswith('1'):
                 fixed_count += 1
                 
-        except Exception:
+        except Exception as e:
+            # Log individual errors pero continuar
             continue
     
-    env['mercadolibre.log'].create({
-        'invoice_id': False,
-        'status': 'success',
-        'message': 'ML data fix cron completed',
-        'ml_pack_id': False
-    })
+    # 3. LOG RESULTADO
+    env['mercadolibre.log'].create_cron_log(
+        status='success',
+        message='ML data fix cron completed - Fixed %d invoices from %d candidates' % (fixed_count, len(invoices_to_fix))
+    )
     
-except Exception:
-    env['mercadolibre.log'].create({
-        'invoice_id': False,
-        'status': 'error',
-        'message': 'Error in ML data fix cron',
-        'ml_pack_id': False
-    })
+except Exception as e:
+    # 4. LOG ERROR GENERAL
+    env['mercadolibre.log'].create_cron_log(
+        status='error',
+        message='Error in ML data fix cron: %s' % str(e)
+    )
             </field>
             <field name="interval_number">1</field>
             <field name="interval_type">days</field>
