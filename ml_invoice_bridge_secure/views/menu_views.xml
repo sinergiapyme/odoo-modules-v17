@@ -5,7 +5,7 @@
               name="MercadoLibre" 
               sequence="85"/>
     
-    <!-- Submenús -->
+    <!-- Submenús - SOLO LOS QUE FUNCIONAN -->
     <menuitem id="menu_mercadolibre_config" 
               name="Configuration" 
               parent="menu_mercadolibre_main" 
@@ -23,10 +23,4 @@
               parent="menu_mercadolibre_main" 
               action="action_invoice_ml_sales" 
               sequence="30"/>
-              
-    <menuitem id="menu_sale_orders_ml" 
-              name="ML Sale Orders" 
-              parent="menu_mercadolibre_main" 
-              action="action_sale_orders_ml" 
-              sequence="40"/>
 </odoo>
