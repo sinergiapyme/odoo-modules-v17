@@ -344,7 +344,7 @@ class AccountMove(models.Model):
                     )
                     return taxes_data['total_included'] - taxes_data['total_excluded']
                 except Exception as e:
-                    _logger.warning(f"Could not compute taxes for line: {e}")
+                    _logger.warning("Could not compute taxes for line: %s", str(e))
                     
             # Si todo falla, retornar 0 (sin impuestos)
             return 0.0
@@ -921,6 +921,10 @@ class AccountMove(models.Model):
             wkhtmltopdf = find_in_path('wkhtmltopdf')
             if not wkhtmltopdf:
                 raise UserError("wkhtmltopdf no está instalado en el servidor")
+
+            import os
+            if not os.path.isfile(wkhtmltopdf) or not os.access(wkhtmltopdf, os.X_OK):
+                raise UserError("wkhtmltopdf no es ejecutable o no existe")
             
             with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as html_file:
                 html_file.write(html_content)
