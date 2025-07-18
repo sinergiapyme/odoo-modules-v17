@@ -15,9 +15,14 @@ _logger = logging.getLogger(__name__)
 class AccountMove(models.Model):
     _inherit = 'account.move'
 
-    # Campos ML básicos
+    # Campos ML básicos - CORREGIDO: is_ml_sale ahora es computed
     ml_pack_id = fields.Char(string='Pack ID', readonly=True, help='MercadoLibre Pack ID')
-    is_ml_sale = fields.Boolean(string='Is ML Sale', default=False, help='Indica si es una venta de MercadoLibre')
+    is_ml_sale = fields.Boolean(
+        string='Is ML Sale', 
+        compute='_compute_is_ml_sale',
+        store=True,
+        help='Indica si es una venta de MercadoLibre'
+    )
     ml_uploaded = fields.Boolean(string='ML Uploaded', default=False, help='Indica si ya fue subida a ML')
     ml_upload_date = fields.Datetime(string='ML Upload Date', readonly=True, help='Fecha de subida a ML')
     
@@ -31,61 +36,45 @@ class AccountMove(models.Model):
     upload_error = fields.Text(string='Upload Error')
     last_upload_attempt = fields.Datetime(string='Last Upload Attempt')
 
-    @api.model
-    def create(self, vals):
-        """Override create para detectar ML al crear factura"""
-        record = super().create(vals)
-        record._detect_ml_sale_safe()
-        return record
-
-    def write(self, vals):
-        """Override write para detectar ML al modificar"""
-        result = super().write(vals)
-        if 'invoice_origin' in vals or 'partner_id' in vals:
-            self._detect_ml_sale_safe()
-        return result
-
-    def _detect_ml_sale_safe(self):
-        """Detecta ventas ML de forma segura, sin interferir con ODUMBO"""
+    @api.depends('invoice_origin', 'partner_id')
+    def _compute_is_ml_sale(self):
+        """Detecta automáticamente si es una venta de MercadoLibre - SIN INTERFERIR CON ODUMBO"""
         for move in self:
+            move.is_ml_sale = False
+            
             if move.move_type not in ('out_invoice', 'out_refund'):
                 continue
                 
-            is_ml = False
-            pack_id = None
-            
-            # MÉTODO 1: Partner "Mercado Libre"
+            # MÉTODO 1: Detectar por partner "Mercado Libre"
             if move.partner_id and 'mercado' in move.partner_id.name.lower():
-                is_ml = True
-                pack_id = self._extract_pack_id_from_anywhere(move)
-                _logger.info(f'ML detected by partner: {move.partner_id.name}')
-            
-            # MÉTODO 2: Buscar en sale.order origen (SIN TOCAR CAMPOS ODUMBO)
-            elif move.invoice_origin:
+                move.is_ml_sale = True
+                pack_id = self._extract_pack_id_safe(move)
+                if pack_id and not move.ml_pack_id:
+                    # Usar sudo() para escribir en campo readonly
+                    move.sudo().write({'ml_pack_id': pack_id})
+                continue
+                
+            # MÉTODO 2: Detectar por sale.order relacionada (SOLO LECTURA - NO MODIFICA ODUMBO)
+            if move.invoice_origin:
                 sale_order = self.env['sale.order'].search([
                     ('name', '=', move.invoice_origin)
                 ], limit=1)
                 
                 if sale_order:
-                    # Verificar origin de la orden
+                    # Verificar origin de la orden (SOLO LECTURA)
                     if sale_order.origin and self._is_ml_origin_text(sale_order.origin):
-                        is_ml = True
-                        pack_id = self._extract_pack_id_from_anywhere(sale_order)
-                        _logger.info(f'ML detected by sale order origin: {sale_order.origin}')
+                        move.is_ml_sale = True
+                        pack_id = self._extract_pack_id_from_text(sale_order.origin)
+                        if pack_id and not move.ml_pack_id:
+                            move.sudo().write({'ml_pack_id': pack_id})
+                        continue
                     
-                    # Verificar partner de la orden
-                    elif sale_order.partner_id and 'mercado' in sale_order.partner_id.name.lower():
-                        is_ml = True
-                        pack_id = self._extract_pack_id_from_anywhere(sale_order)
-                        _logger.info(f'ML detected by sale order partner: {sale_order.partner_id.name}')
-            
-            # Solo actualizar si detectamos cambios
-            if is_ml and not move.is_ml_sale:
-                values = {'is_ml_sale': True}
-                if pack_id and not move.ml_pack_id:
-                    values['ml_pack_id'] = pack_id
-                    _logger.info(f'Pack ID detected: {pack_id} for invoice {move.name}')
-                move.write(values)
+                    # Verificar partner de la orden (SOLO LECTURA)
+                    if sale_order.partner_id and 'mercado' in sale_order.partner_id.name.lower():
+                        move.is_ml_sale = True
+                        pack_id = self._extract_pack_id_safe(sale_order)
+                        if pack_id and not move.ml_pack_id:
+                            move.sudo().write({'ml_pack_id': pack_id})
 
     def _is_ml_origin_text(self, text):
         """Detecta si el texto indica origen MercadoLibre"""
@@ -103,22 +92,19 @@ class AccountMove(models.Model):
         
         return any(indicator in text_lower for indicator in ml_indicators)
 
-    def _extract_pack_id_from_anywhere(self, source):
-        """Extrae pack_id de cualquier fuente disponible"""
-        pack_id = None
-        
-        # Lista de atributos a revisar
+    def _extract_pack_id_safe(self, source_object):
+        """Extrae pack_id de múltiples fuentes de forma segura"""
+        # Lista de atributos a revisar (SOLO LECTURA)
         attrs_to_check = ['origin', 'name', 'invoice_origin', 'ref']
         
         for attr in attrs_to_check:
-            if hasattr(source, attr):
-                value = getattr(source, attr)
+            if hasattr(source_object, attr):
+                value = getattr(source_object, attr, None)
                 if value:
                     pack_id = self._extract_pack_id_from_text(value)
                     if pack_id:
-                        break
-        
-        return pack_id
+                        return pack_id
+        return None
 
     def _extract_pack_id_from_text(self, text):
         """Extrae pack_id usando regex flexible"""
@@ -156,7 +142,8 @@ class AccountMove(models.Model):
         old_is_ml = self.is_ml_sale
         old_pack_id = self.ml_pack_id
         
-        self._detect_ml_sale_safe()
+        # Forzar recálculo del computed field
+        self._compute_is_ml_sale()
         
         return {
             'type': 'ir.actions.client',
