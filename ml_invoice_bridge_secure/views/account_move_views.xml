@@ -60,6 +60,37 @@
         </field>
     </record>
 
+    <!-- Vista de búsqueda extendida para facturas ML -->
+    <record id="view_account_move_search_ml" model="ir.ui.view">
+        <field name="name">account.move.search.ml</field>
+        <field name="model">account.move</field>
+        <field name="inherit_id" ref="account.view_account_invoice_filter"/>
+        <field name="arch" type="xml">
+            <!-- Agregar filtros específicos ML -->
+            <xpath expr="//filter[@name='draft']" position="after">
+                <separator/>
+                <!-- 🆕 FILTROS ML -->
+                <filter string="Pendientes de subir" name="filter_not_uploaded" 
+                        domain="[('is_ml_sale', '=', True), ('ml_uploaded', '=', False)]"/>
+                <filter string="Ya subidas a ML" name="filter_uploaded" 
+                        domain="[('is_ml_sale', '=', True), ('ml_uploaded', '=', True)]"/>
+                <filter string="Con errores de subida" name="filter_upload_errors" 
+                        domain="[('is_ml_sale', '=', True), ('upload_status', '=', 'error')]"/>
+            </xpath>
+            
+            <!-- Agregar campos de búsqueda ML -->
+            <xpath expr="//field[@name='partner_id']" position="after">
+                <field name="ml_pack_id" string="Pack ID ML"/>
+            </xpath>
+            
+            <!-- Agregar agrupación por estado ML -->
+            <xpath expr="//group[@expand='0']" position="inside">
+                <filter string="Estado Upload ML" name="group_by_upload_status" 
+                        context="{'group_by': 'upload_status'}"/>
+            </xpath>
+        </field>
+    </record>
+
     <!-- 🆕 NUEVO: Action Server para corrección masiva - CONSERVADOR -->
     <record id="action_fix_ml_data_bulk" model="ir.actions.server">
         <field name="name">🔧 Fix ML Data (Bulk)</field>
@@ -106,21 +137,28 @@ else:
         </field>
     </record>
 
-    <!-- Action para facturas ML -->
+    <!-- Action para facturas ML - ACTUALIZADO con filtro por defecto -->
     <record id="action_invoice_ml_sales" model="ir.actions.act_window">
         <field name="name">Facturas MercadoLibre</field>
         <field name="res_model">account.move</field>
         <field name="view_mode">tree,form</field>
         <field name="domain">[('is_ml_sale', '=', True)]</field>
-        <field name="context">{'default_is_ml_sale': True, 'create': False}</field>
+        <!-- 🆕 CAMBIO: Filtrar por defecto facturas NO subidas -->
+        <field name="context">{'default_is_ml_sale': True, 'create': False, 'search_default_filter_not_uploaded': 1}</field>
         <field name="help" type="html">
             <p class="o_view_nocontent_smiling_face">
-                No hay facturas de MercadoLibre
+                No hay facturas de MercadoLibre pendientes de subir
             </p>
             <p>
-                Las facturas de MercadoLibre aparecerán aquí.<br/>
-                Para marcar una factura como ML: edítala y marca "Venta ML" + asigna "Pack ID".
+                Las facturas de MercadoLibre <strong>pendientes de subir</strong> aparecerán aquí.<br/>
+                <strong>Para ver todas:</strong> Quita el filtro "Pendientes de subir"
             </p>
+            <ul>
+                <li>✅ Detectadas automáticamente como ML</li>
+                <li>✅ Con Pack ID extraído desde sale order</li>
+                <li>⏳ Listas para subir a MercadoLibre</li>
+                <li>🔍 <strong>Tip:</strong> Usa "Fix ML Data (Bulk)" en facturas sin datos ML</li>
+            </ul>
         </field>
     </record>
 </odoo>
