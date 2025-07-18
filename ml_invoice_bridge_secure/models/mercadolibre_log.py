@@ -10,7 +10,8 @@ class MercadoLibreLog(models.Model):
     _rec_name = 'display_name'
 
     display_name = fields.Char(string='Name', compute='_compute_display_name', store=True)
-    invoice_id = fields.Many2one('account.move', string='Invoice', required=True, ondelete='cascade')
+    # 🔧 CORRECCIÓN CRÍTICA: required=False para permitir logs de cron
+    invoice_id = fields.Many2one('account.move', string='Invoice', required=False, ondelete='cascade')
     ml_pack_id = fields.Char(string='Pack ID')
     status = fields.Selection([('success', 'Success'), ('error', 'Error')], string='Status', required=True)
     message = fields.Text(string='Message')
@@ -20,14 +21,27 @@ class MercadoLibreLog(models.Model):
     def _compute_display_name(self):
         for log in self:
             if log.invoice_id:
-                log.display_name = f"{log.invoice_id.name} - {log.status.title()}"
+                log.display_name = "%s - %s" % (log.invoice_id.name, log.status.title())
             else:
-                log.display_name = f"Log - {log.status.title()}"
+                # 🔧 MEJORADO: Mejor identificación de logs de cron
+                log.display_name = "CRON - %s" % log.status.title()
 
     @api.model
     def create_log(self, invoice_id, status, message, **kwargs):
+        """Método estándar para crear logs de facturas"""
         return self.create({
             'invoice_id': invoice_id,
+            'status': status,
+            'message': message,
+            'ml_pack_id': kwargs.get('ml_pack_id'),
+            'ml_response': kwargs.get('ml_response'),
+        })
+
+    @api.model
+    def create_cron_log(self, status, message, **kwargs):
+        """🆕 NUEVO: Método específico para logs de cron sin factura"""
+        return self.create({
+            'invoice_id': False,  # Permitido para logs de cron
             'status': status,
             'message': message,
             'ml_pack_id': kwargs.get('ml_pack_id'),
