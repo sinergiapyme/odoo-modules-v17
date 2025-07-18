@@ -258,7 +258,7 @@ class AccountMove(models.Model):
                 self.env['mercadolibre.log'].create_log(
                     invoice_id=self.id,
                     status='success', 
-                    message=f'Upload successful: {len(pdf_content)} bytes uploaded',
+                    message='Upload successful: %d bytes uploaded' % len(pdf_content),
                     ml_pack_id=self.ml_pack_id,
                     ml_response=str(result.get('data', {}))
                 )
@@ -268,14 +268,14 @@ class AccountMove(models.Model):
                     'tag': 'display_notification',
                     'params': {
                         'title': 'Éxito',
-                        'message': f'Factura subida correctamente. PDF: {len(pdf_content)} bytes',
+                        'message': 'Factura subida correctamente. PDF: %d bytes' % len(pdf_content),
                         'sticky': False,
                     }
                 }
             else:
                 error_msg = result.get('error', 'Unknown error')
                 self._handle_upload_error(error_msg)
-                raise UserError(f"Error en API de ML: {error_msg}")
+                raise UserError("Error en API de ML: %s" % error_msg)
                 
         except Exception as e:
             error_msg = str(e)
@@ -350,7 +350,7 @@ class AccountMove(models.Model):
             return 0.0
             
         except Exception as e:
-            _logger.error(f"Error calculating tax amount: {e}")
+            _logger.error("Error calculating tax amount: %s", str(e))
             return 0.0
 
     def _generate_exact_invoice_html(self):
@@ -421,7 +421,7 @@ class AccountMove(models.Model):
                 # Obtener código del producto
                 product_code = ''
                 if line.product_id and line.product_id.default_code:
-                    product_code = f'[{line.product_id.default_code}] '
+                    product_code = '[%s] ' % line.product_id.default_code
                 
                 # Obtener nombre del producto/servicio
                 product_name = line.name or ''
@@ -455,7 +455,7 @@ class AccountMove(models.Model):
                     tax_info = ""
                     if hasattr(line, 'tax_ids') and line.tax_ids:
                         tax_names = ', '.join(tax.name for tax in line.tax_ids)
-                        tax_info = f" (Taxes: {tax_names})"
+                        tax_info = " (Taxes: %s)" % tax_names
                         
                     _logger.info("Line B invoice: %s%s, subtotal_excl=%s, subtotal_incl=%s", 
                                 line.product_id.name if line.product_id else 'N/A', tax_info, 
@@ -883,7 +883,7 @@ class AccountMove(models.Model):
                 if miles == 1:
                     resultado.append("Mil")
                 else:
-                    resultado.append(f"{unidades[miles]} Mil")
+                    resultado.append("%s Mil" % unidades[miles])
             
             # Convertir centenas
             cent = resto // 100
@@ -909,7 +909,7 @@ class AccountMove(models.Model):
             return ' '.join(resultado) + ' Pesos'
             
         except:
-            return f"{int(amount)} Pesos"
+            return "%d Pesos" % int(amount)
 
     def _html_to_pdf_direct(self, html_content):
         """Convierte HTML a PDF usando wkhtmltopdf directamente - BYPASS COMPLETO"""
@@ -944,12 +944,12 @@ class AccountMove(models.Model):
                 pdf_path
             ]
             
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
             out, err = process.communicate()
             
             if process.returncode != 0:
                 _logger.error("wkhtmltopdf error: %s", err.decode())
-                raise UserError(f"Error generando PDF: {err.decode()}")
+                raise UserError("Error generando PDF: %s" % err.decode())
             
             with open(pdf_path, 'rb') as pdf_file:
                 pdf_content = pdf_file.read()
@@ -1043,11 +1043,11 @@ class AccountMove(models.Model):
             
             # URL correcta para subir facturas fiscales a ML
             # Formato: https://api.mercadolibre.com/packs/{pack_id}/fiscal_documents
-            ml_api_url = f'https://api.mercadolibre.com/packs/{self.ml_pack_id}/fiscal_documents'
+            ml_api_url = 'https://api.mercadolibre.com/packs/%s/fiscal_documents' % self.ml_pack_id
             
             # Preparar el archivo
             files = {
-                'fiscal_document': (f'factura_{self.name}.pdf', pdf_content, 'application/pdf')
+                'fiscal_document': ('factura_%s.pdf' % self.name, pdf_content, 'application/pdf')
             }
             
             # Headers con el token de la configuración
@@ -1073,10 +1073,10 @@ class AccountMove(models.Model):
                 # Token expirado
                 raise UserError("Token expirado. Por favor, actualice el token en la configuración de MercadoLibre")
             elif response.status_code == 404:
-                raise UserError(f"Pack ID {self.ml_pack_id} no encontrado en MercadoLibre")
+                raise UserError("Pack ID %s no encontrado en MercadoLibre" % self.ml_pack_id)
             else:
                 error_data = response.json() if response.content else {}
-                error_msg = error_data.get('message', f"HTTP {response.status_code}: {response.text[:200]}")
+                error_msg = error_data.get('message', "HTTP %d: %s" % (response.status_code, response.text[:200]))
                 _logger.error("❌ Upload failed: %s", error_msg)
                 return {'success': False, 'error': error_msg}
                 
@@ -1085,11 +1085,11 @@ class AccountMove(models.Model):
             _logger.error(error_msg)
             return {'success': False, 'error': error_msg}
         except requests.exceptions.RequestException as e:
-            error_msg = f"Error de conexión: {str(e)}"
+            error_msg = "Error de conexión: %s" % str(e)
             _logger.error(error_msg)
             return {'success': False, 'error': error_msg}
         except Exception as e:
-            error_msg = f"Error inesperado: {str(e)}"
+            error_msg = "Error inesperado: %s" % str(e)
             _logger.error("❌ Upload exception: %s", error_msg, exc_info=True)
             return {'success': False, 'error': error_msg}
 
@@ -1151,7 +1151,7 @@ class AccountMove(models.Model):
                 'tag': 'display_notification',
                 'params': {
                     'title': 'Test Exitoso - BYPASS',
-                    'message': f'PDF generado con bypass: {len(pdf_content)} bytes. Revisa los adjuntos.',
+                    'message': 'PDF generado con bypass: %d bytes. Revisa los adjuntos.' % len(pdf_content),
                     'sticky': False,
                 }
             }
