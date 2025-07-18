@@ -11,7 +11,7 @@ import gc
 #import sys
 from contextlib import contextmanager
 from odoo import api, fields, models, _
-from odoo.exceptions import UserError, AccessError
+from odoo.exceptions import UserError, AccessError, ValidationError  # 🔒 AGREGADO: ValidationError
 
 _logger = logging.getLogger(__name__)
 
@@ -33,6 +33,22 @@ class AccountMove(models.Model):
     ], string='Upload Status', default='pending')
     upload_error = fields.Text(string='Upload Error')
     last_upload_attempt = fields.Datetime(string='Last Upload Attempt')
+
+    # 🔒 AGREGADO: Constraint de unicidad para Pack ID
+    @api.constrains('ml_pack_id')
+    def _check_unique_pack_id(self):
+        """Evita pack_ids duplicados"""
+        if self.ml_pack_id:
+            existing = self.search([
+                ('ml_pack_id', '=', self.ml_pack_id),
+                ('id', '!=', self.id),
+                ('is_ml_sale', '=', True)
+            ])
+            if existing:
+                raise ValidationError(
+                    'Pack ID %s ya existe en factura %s' % 
+                    (self.ml_pack_id, existing.name)
+                )
 
     @api.model_create_multi
     def create(self, vals_list):
@@ -287,7 +303,7 @@ class AccountMove(models.Model):
                 raise UserError("Error generando PDF")
                 
         except Exception as e:
-            _logger.error(f"Bypass generation failed: {str(e)}")
+            _logger.error("Bypass generation failed: %s", str(e))
             raise
 
     def _get_safe_field(self, obj, field_path, default=''):
@@ -355,7 +371,7 @@ class AccountMove(models.Model):
         
         # Número de documento formateado
         pos_number = self._get_safe_field(self, 'journal_id.l10n_ar_afip_pos_number', 1)
-        doc_number = self._get_safe_field(self, 'l10n_latam_document_number', f"{pos_number:05d}-00000001")
+        doc_number = self._get_safe_field(self, 'l10n_latam_document_number', "%05d-00000001" % pos_number)
         
         # Datos AFIP
         cae = self._get_safe_field(self, 'l10n_ar_afip_auth_code', '75283895011362')
@@ -396,8 +412,8 @@ class AccountMove(models.Model):
         
         # Construir líneas de productos - VERSIÓN MEJORADA PARA FACTURAS A/B
         items_html = ""
-        _logger.info(f"Processing invoice lines for {self.name}. Total lines: {len(self.invoice_line_ids)}")
-        _logger.info(f"Invoice type: {doc_letter} ({'Without taxes' if is_invoice_a else 'With taxes included'})")
+        _logger.info("Processing invoice lines for %s. Total lines: %d", self.name, len(self.invoice_line_ids))
+        _logger.info("Invoice type: %s (%s)", doc_letter, 'Without taxes' if is_invoice_a else 'With taxes included')
         
         for line in self.invoice_line_ids:
             # Solo procesar líneas con cantidad y precio
@@ -441,8 +457,9 @@ class AccountMove(models.Model):
                         tax_names = ', '.join(tax.name for tax in line.tax_ids)
                         tax_info = f" (Taxes: {tax_names})"
                         
-                    _logger.info(f"Line B invoice: {line.product_id.name if line.product_id else 'N/A'}{tax_info}, "
-                                f"subtotal_excl={line.price_subtotal}, subtotal_incl={subtotal_to_show}")
+                    _logger.info("Line B invoice: %s%s, subtotal_excl=%s, subtotal_incl=%s", 
+                                line.product_id.name if line.product_id else 'N/A', tax_info, 
+                                line.price_subtotal, subtotal_to_show)
                 
                 # Formatear valores
                 quantity = format_number(line.quantity)
@@ -460,13 +477,12 @@ class AccountMove(models.Model):
                 </tr>
                 """
                 
-                _logger.info(f"Line processed: {product_name}, qty={line.quantity}, "
-                            f"price_unit={line.price_unit}, price_shown={price_to_show}, "
-                            f"subtotal_shown={subtotal_to_show}")
+                _logger.info("Line processed: %s, qty=%s, price_unit=%s, price_shown=%s, subtotal_shown=%s", 
+                            product_name, line.quantity, line.price_unit, price_to_show, subtotal_to_show)
         
         # Si no hay líneas, agregar mensaje
         if not items_html:
-            _logger.warning(f"No product lines found for invoice {self.name}")
+            _logger.warning("No product lines found for invoice %s", self.name)
             items_html = """
             <tr>
                 <td colspan="4" style="text-align: center; padding: 20px; color: #999;">
@@ -728,7 +744,7 @@ class AccountMove(models.Model):
     <div class="header">
         <div class="header-left">
             <div class="logo-container">
-                {f'<img src="{logo_data}" class="logo" />' if logo_data else '<div style="width:100%;height:100%;background:#1a237e;"></div>'}
+                {('<img src="%s" class="logo" />' % logo_data) if logo_data else '<div style="width:100%;height:100%;background:#1a237e;"></div>'}
             </div>
             <div class="company-name">{self.company_id.name}</div>
             <div class="company-info">
@@ -995,7 +1011,7 @@ class AccountMove(models.Model):
             return f"https://www.afip.gob.ar/fe/qr/?p={encoded}"
             
         except Exception as e:
-            _logger.warning(f"Error generating QR URL: {e}")
+            _logger.warning("Error generating QR URL: %s", str(e))
             # URL del QR de la factura de ejemplo
             return "https://www.afip.gob.ar/fe/qr/?p=eyJ2ZXIiOiAxLCAiZmVjaGEiOiAiMjAyNS0wNy0xMCIsICJjdWl0IjogMzA3MTY3MzQ0NDMsICJwdG9WdGEiOiAxLCAidGlwb0NtcCI6IDYsICJucm9DbXAiOiAzMDUsICJpbXBvcnRlIjogMzU5MC4wLCAibW9uZWRhIjogIlBFUyIsICJjdHoiOiAxLjAsICJ0aXBvQ29kQXV0IjogIkUiLCAiY29kQXV0IjogNzUyODM4OTUwMTEzNjIsICJ0aXBvRG9jUmVjIjogOTYsICJucm9Eb2NSZWMiOiAzMTU1NjEwM30="
 
