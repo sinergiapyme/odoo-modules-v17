@@ -1,16 +1,14 @@
 # -*- coding: utf-8 -*-
 
-import base64
-import tempfile
-import os
-import json
 import logging
-import re
 import requests
-import gc
-from contextlib import contextmanager
-from odoo import api, fields, models, _
-from odoo.exceptions import UserError, AccessError, ValidationError
+import base64
+import io
+import json
+import re
+from odoo import models, fields, api, _
+from odoo.exceptions import UserError
+from odoo.tools import config
 
 _logger = logging.getLogger(__name__)
 
@@ -33,138 +31,142 @@ class AccountMove(models.Model):
     upload_error = fields.Text(string='Upload Error')
     last_upload_attempt = fields.Datetime(string='Last Upload Attempt')
 
-    @api.model_create_multi
-    def create(self, vals_list):
-        """Override create para manejar datos ML y AFIP en facturación en lote - VERSIÓN SEGURA"""
-        # Procesar cada factura que se va a crear
-        for vals in vals_list:
-            try:
-                self._populate_ml_data_from_sale_order_safe(vals)
-                self._populate_afip_service_periods_safe(vals)
-            except Exception as e:
-                # Si hay error, loggear pero no fallar la creación
-                _logger.warning('Error populating ML/AFIP data during create: %s', str(e))
-                continue
-        
-        return super().create(vals_list)
+    @api.model
+    def create(self, vals):
+        """Override create para detectar ML al crear factura"""
+        record = super().create(vals)
+        record._detect_ml_sale_safe()
+        return record
 
-    def _populate_ml_data_from_sale_order_safe(self, vals):
-        """
-        VERSIÓN SEGURA: Poblar datos ML desde sale order en facturación en lote
-        NO interfiere con ODUMBO - Solo lee, no escribe en sale.order
-        """
-        try:
-            # Si ya tiene los datos ML, no hacer nada
-            if vals.get('ml_pack_id') and vals.get('is_ml_sale'):
-                return
+    def write(self, vals):
+        """Override write para detectar ML al modificar"""
+        result = super().write(vals)
+        if 'invoice_origin' in vals or 'partner_id' in vals:
+            self._detect_ml_sale_safe()
+        return result
+
+    def _detect_ml_sale_safe(self):
+        """Detecta ventas ML de forma segura, sin interferir con ODUMBO"""
+        for move in self:
+            if move.move_type not in ('out_invoice', 'out_refund'):
+                continue
+                
+            is_ml = False
+            pack_id = None
             
-            # Buscar sale order relacionada por invoice_origin
-            invoice_origin = vals.get('invoice_origin')
-            if not invoice_origin:
-                return
+            # MÉTODO 1: Partner "Mercado Libre"
+            if move.partner_id and 'mercado' in move.partner_id.name.lower():
+                is_ml = True
+                pack_id = self._extract_pack_id_from_anywhere(move)
+                _logger.info(f'ML detected by partner: {move.partner_id.name}')
             
-            # ACCESO SEGURO CON TIMEOUT Y SIN LOCKS
-            try:
+            # MÉTODO 2: Buscar en sale.order origen (SIN TOCAR CAMPOS ODUMBO)
+            elif move.invoice_origin:
                 sale_order = self.env['sale.order'].search([
-                    ('name', '=', invoice_origin)
+                    ('name', '=', move.invoice_origin)
                 ], limit=1)
                 
-                if not sale_order:
-                    _logger.debug('No sale order found for invoice_origin: %s', invoice_origin)
-                    return
-                
-                # VERIFICACIÓN SEGURA DE CAMPOS
-                if not hasattr(sale_order, 'origin'):
-                    return
+                if sale_order:
+                    # Verificar origin de la orden
+                    if sale_order.origin and self._is_ml_origin_text(sale_order.origin):
+                        is_ml = True
+                        pack_id = self._extract_pack_id_from_anywhere(sale_order)
+                        _logger.info(f'ML detected by sale order origin: {sale_order.origin}')
                     
-                # Verificar si es venta de MercadoLibre
-                if sale_order.origin and 'MercadoLibre Order' in sale_order.origin:
-                    vals['is_ml_sale'] = True
-                    
-                    # Extraer Pack ID del origin de la sale order
-                    pack_id = self._extract_pack_id_from_origin_safe(sale_order.origin)
+                    # Verificar partner de la orden
+                    elif sale_order.partner_id and 'mercado' in sale_order.partner_id.name.lower():
+                        is_ml = True
+                        pack_id = self._extract_pack_id_from_anywhere(sale_order)
+                        _logger.info(f'ML detected by sale order partner: {sale_order.partner_id.name}')
+            
+            # Solo actualizar si detectamos cambios
+            if is_ml and not move.is_ml_sale:
+                values = {'is_ml_sale': True}
+                if pack_id and not move.ml_pack_id:
+                    values['ml_pack_id'] = pack_id
+                    _logger.info(f'Pack ID detected: {pack_id} for invoice {move.name}')
+                move.write(values)
+
+    def _is_ml_origin_text(self, text):
+        """Detecta si el texto indica origen MercadoLibre"""
+        if not text:
+            return False
+            
+        text_lower = text.lower()
+        ml_indicators = [
+            'mercadolibre',
+            'mercado libre', 
+            'ml order',
+            'odumbo',
+            'venta confirmada'
+        ]
+        
+        return any(indicator in text_lower for indicator in ml_indicators)
+
+    def _extract_pack_id_from_anywhere(self, source):
+        """Extrae pack_id de cualquier fuente disponible"""
+        pack_id = None
+        
+        # Lista de atributos a revisar
+        attrs_to_check = ['origin', 'name', 'invoice_origin', 'ref']
+        
+        for attr in attrs_to_check:
+            if hasattr(source, attr):
+                value = getattr(source, attr)
+                if value:
+                    pack_id = self._extract_pack_id_from_text(value)
                     if pack_id:
-                        vals['ml_pack_id'] = pack_id
-                        _logger.info('✅ ML data populated for batch invoice: Pack ID %s', pack_id)
-                    else:
-                        _logger.warning('⚠️ MercadoLibre order found but no Pack ID extracted from: %s', sale_order.origin)
-                        
-            except Exception as e:
-                # Error específico de acceso a sale.order - no bloquear la facturación
-                _logger.warning('Could not access sale.order safely: %s', str(e))
-                return
-            
-        except Exception as e:
-            _logger.error('❌ Error in safe ML data population: %s', str(e))
+                        break
+        
+        return pack_id
 
-    def _populate_afip_service_periods_safe(self, vals):
-        """
-        VERSIÓN SEGURA: Poblar periodos de servicio AFIP con fecha de factura
-        """
+    def _extract_pack_id_from_text(self, text):
+        """Extrae pack_id usando regex flexible"""
+        if not text:
+            return None
+            
         try:
-            # Solo procesar si la factura tiene líneas con servicios
-            # y no tiene ya los campos de periodo definidos
-            if vals.get('afip_associated_period_from') or vals.get('afip_associated_period_to'):
-                return
-            
-            # Obtener fecha de la factura
-            invoice_date = vals.get('invoice_date')
-            if not invoice_date:
-                # Si no hay fecha, usar la fecha actual
-                from datetime import date
-                invoice_date = date.today()
-            
-            # Verificar si hay líneas con servicios
-            invoice_lines = vals.get('invoice_line_ids', [])
-            has_services = False
-            
-            for line_vals in invoice_lines:
-                if isinstance(line_vals, (list, tuple)) and len(line_vals) >= 3:
-                    # line_vals format: (0, 0, {...}) para nuevas líneas
-                    line_data = line_vals[2] if line_vals[0] == 0 else {}
-                    product_id = line_data.get('product_id')
+            # Buscar números de 13-20 dígitos (pack_id típico ML)
+            matches = re.findall(r'(\d{13,20})', str(text))
+            for match in matches:
+                if 13 <= len(match) <= 20:
+                    return match
                     
-                    if product_id:
-                        try:
-                            # ACCESO SEGURO A PRODUCTO
-                            product = self.env['product.product'].browse(product_id)
-                            if product.exists() and hasattr(product, 'type') and product.type == 'service':
-                                has_services = True
-                                break
-                        except Exception as e:
-                            _logger.warning('Could not check product type safely: %s', str(e))
-                            continue
+            # Buscar números de 10-20 dígitos después de palabras clave
+            patterns = [
+                r'order[:\s]+(\d{10,20})',
+                r'ml[:\s]+(\d{10,20})',
+                r'pack[:\s]+(\d{10,20})',
+            ]
             
-            # Si hay servicios, completar los periodos con la fecha de factura
-            if has_services:
-                vals['afip_associated_period_from'] = invoice_date
-                vals['afip_associated_period_to'] = invoice_date
-                _logger.info('✅ AFIP service periods populated with invoice date: %s', invoice_date)
-            
+            for pattern in patterns:
+                match = re.search(pattern, str(text), re.IGNORECASE)
+                if match and 10 <= len(match.group(1)) <= 20:
+                    return match.group(1)
+                    
         except Exception as e:
-            _logger.error('❌ Error populating AFIP service periods: %s', str(e))
+            _logger.warning(f'Error extracting pack_id from "{text}": {e}')
+        
+        return None
 
-    @classmethod
-    def _extract_pack_id_from_origin_safe(cls, origin_text):
-        """
-        Extrae Pack ID del origin de la sale order de forma segura
-        """
-        try:
-            if not origin_text:
-                return None
-            
-            # Buscar patrón: MercadoLibre Order + número de 10-16 dígitos
-            match = re.search(r'MercadoLibre Order\s+(\d{10,16})', origin_text, re.IGNORECASE)
-            if match:
-                pack_id = match.group(1)
-                if pack_id.isdigit() and 10 <= len(pack_id) <= 16:
-                    return pack_id
-            
-            return None
-            
-        except Exception as e:
-            _logger.warning('Error extracting pack_id from origin: %s', str(e))
-            return None
+    def action_force_detect_ml(self):
+        """Acción manual para forzar detección ML"""
+        self.ensure_one()
+        
+        old_is_ml = self.is_ml_sale
+        old_pack_id = self.ml_pack_id
+        
+        self._detect_ml_sale_safe()
+        
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'title': 'Detección ML',
+                'message': f'ML: {old_is_ml}→{self.is_ml_sale}, Pack ID: {old_pack_id or "None"}→{self.ml_pack_id or "None"}',
+                'sticky': False,
+            }
+        }
 
     def action_upload_to_ml(self):
         """Acción principal: generar PDF legal y subir a ML"""
@@ -179,7 +181,7 @@ class AccountMove(models.Model):
             
             _logger.info("Starting upload for invoice %s, ml_pack_id: %s", self.display_name, self.ml_pack_id)
             
-            # BYPASS COMPLETO - Generar PDF sin usar reportes de Odoo
+            # Generar PDF usando el método que ya funciona
             pdf_content = self._generate_pdf_direct_bypass()
             
             if not pdf_content:
@@ -202,7 +204,7 @@ class AccountMove(models.Model):
                 self.env['mercadolibre.log'].create_log(
                     invoice_id=self.id,
                     status='success', 
-                    message='Upload successful: %d bytes uploaded' % len(pdf_content),
+                    message=f'Upload successful: {len(pdf_content)} bytes uploaded',
                     ml_pack_id=self.ml_pack_id,
                     ml_response=str(result.get('data', {}))
                 )
@@ -212,14 +214,14 @@ class AccountMove(models.Model):
                     'tag': 'display_notification',
                     'params': {
                         'title': 'Éxito',
-                        'message': 'Factura subida correctamente. PDF: %d bytes' % len(pdf_content),
+                        'message': f'Factura subida correctamente. PDF: {len(pdf_content)} bytes',
                         'sticky': False,
                     }
                 }
             else:
                 error_msg = result.get('error', 'Unknown error')
                 self._handle_upload_error(error_msg)
-                raise UserError("Error en API de ML: %s" % error_msg)
+                raise UserError(f"Error en API de ML: {error_msg}")
                 
         except Exception as e:
             error_msg = str(e)
@@ -247,7 +249,7 @@ class AccountMove(models.Model):
                 raise UserError("Error generando PDF")
                 
         except Exception as e:
-            _logger.error("Bypass generation failed: %s", str(e))
+            _logger.error(f"Bypass generation failed: {str(e)}")
             raise
 
     def _get_safe_field(self, obj, field_path, default=''):
@@ -288,13 +290,13 @@ class AccountMove(models.Model):
                     )
                     return taxes_data['total_included'] - taxes_data['total_excluded']
                 except Exception as e:
-                    _logger.warning("Could not compute taxes for line: %s", str(e))
+                    _logger.warning(f"Could not compute taxes for line: {e}")
                     
             # Si todo falla, retornar 0 (sin impuestos)
             return 0.0
             
         except Exception as e:
-            _logger.error("Error calculating tax amount: %s", str(e))
+            _logger.error(f"Error calculating tax amount: {e}")
             return 0.0
 
     def _generate_exact_invoice_html(self):
@@ -303,7 +305,7 @@ class AccountMove(models.Model):
         # Logo de la compañía
         logo_data = ''
         if self.company_id.logo:
-            logo_data = "data:image/png;base64,%s" % self.company_id.logo.decode('utf-8')
+            logo_data = f"data:image/png;base64,{self.company_id.logo.decode('utf-8')}"
         
         # Datos del documento
         doc_letter = self._get_safe_field(self, 'l10n_latam_document_type_id.l10n_ar_letter', 'B')
@@ -315,7 +317,7 @@ class AccountMove(models.Model):
         
         # Número de documento formateado
         pos_number = self._get_safe_field(self, 'journal_id.l10n_ar_afip_pos_number', 1)
-        doc_number = self._get_safe_field(self, 'l10n_latam_document_number', "%05d-00000001" % pos_number)
+        doc_number = self._get_safe_field(self, 'l10n_latam_document_number', f"{pos_number:05d}-00000001")
         
         # Datos AFIP
         cae = self._get_safe_field(self, 'l10n_ar_afip_auth_code', '75283895011362')
@@ -339,7 +341,7 @@ class AccountMove(models.Model):
         
         # Formato de números argentino
         def format_number(num):
-            return ("{:,.2f}".format(num)).replace(",", "X").replace(".", ",").replace("X", ".")
+            return f"{num:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
         
         # Total en palabras
         total_words = self._num_to_words(self.amount_total)
@@ -356,8 +358,8 @@ class AccountMove(models.Model):
         
         # Construir líneas de productos - VERSIÓN MEJORADA PARA FACTURAS A/B
         items_html = ""
-        _logger.info("Processing invoice lines for %s. Total lines: %d", self.name, len(self.invoice_line_ids))
-        _logger.info("Invoice type: %s (%s)", doc_letter, 'Without taxes' if is_invoice_a else 'With taxes included')
+        _logger.info(f"Processing invoice lines for {self.name}. Total lines: {len(self.invoice_line_ids)}")
+        _logger.info(f"Invoice type: {doc_letter} ({'Without taxes' if is_invoice_a else 'With taxes included'})")
         
         for line in self.invoice_line_ids:
             # Solo procesar líneas con cantidad y precio
@@ -365,7 +367,7 @@ class AccountMove(models.Model):
                 # Obtener código del producto
                 product_code = ''
                 if line.product_id and line.product_id.default_code:
-                    product_code = '[%s] ' % line.product_id.default_code
+                    product_code = f'[{line.product_id.default_code}] '
                 
                 # Obtener nombre del producto/servicio
                 product_name = line.name or ''
@@ -399,11 +401,10 @@ class AccountMove(models.Model):
                     tax_info = ""
                     if hasattr(line, 'tax_ids') and line.tax_ids:
                         tax_names = ', '.join(tax.name for tax in line.tax_ids)
-                        tax_info = " (Taxes: %s)" % tax_names
+                        tax_info = f" (Taxes: {tax_names})"
                         
-                    _logger.info("Line B invoice: %s%s, subtotal_excl=%s, subtotal_incl=%s", 
-                                line.product_id.name if line.product_id else 'N/A', tax_info, 
-                                line.price_subtotal, subtotal_to_show)
+                    _logger.info(f"Line B invoice: {line.product_id.name if line.product_id else 'N/A'}{tax_info}, "
+                                f"subtotal_excl={line.price_subtotal}, subtotal_incl={subtotal_to_show}")
                 
                 # Formatear valores
                 quantity = format_number(line.quantity)
@@ -412,21 +413,22 @@ class AccountMove(models.Model):
                 subtotal = format_number(subtotal_to_show)
                 
                 # Agregar línea al HTML
-                items_html += """
+                items_html += f"""
                 <tr>
-                    <td>%s%s</td>
-                    <td class="text-center">%s %s</td>
-                    <td class="text-right">$%s</td>
-                    <td class="text-right">$ %s</td>
+                    <td>{product_code}{product_name}</td>
+                    <td class="text-center">{quantity} {uom}</td>
+                    <td class="text-right">${price}</td>
+                    <td class="text-right">$ {subtotal}</td>
                 </tr>
-                """ % (product_code, product_name, quantity, uom, price, subtotal)
+                """
                 
-                _logger.info("Line processed: %s, qty=%s, price_unit=%s, price_shown=%s, subtotal_shown=%s", 
-                            product_name, line.quantity, line.price_unit, price_to_show, subtotal_to_show)
+                _logger.info(f"Line processed: {product_name}, qty={line.quantity}, "
+                            f"price_unit={line.price_unit}, price_shown={price_to_show}, "
+                            f"subtotal_shown={subtotal_to_show}")
         
         # Si no hay líneas, agregar mensaje
         if not items_html:
-            _logger.warning("No product lines found for invoice %s", self.name)
+            _logger.warning(f"No product lines found for invoice {self.name}")
             items_html = """
             <tr>
                 <td colspan="4" style="text-align: center; padding: 20px; color: #999;">
@@ -435,89 +437,89 @@ class AccountMove(models.Model):
             </tr>
             """
         
-        html = """
+        html = f"""
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
     <style>
-        @page {
+        @page {{
             size: A4;
             margin: 10mm;
-        }
+        }}
         
-        * {
+        * {{
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-        }
+        }}
         
-        body {
+        body {{
             font-family: Arial, sans-serif;
             font-size: 11px;
             line-height: 1.4;
             color: #000;
-        }
+        }}
         
         /* Header con 3 columnas */
-        .header {
+        .header {{
             display: table;
-            width: 100%%;
+            width: 100%;
             margin-bottom: 20px;
-        }
+        }}
         
-        .header-left {
+        .header-left {{
             display: table-cell;
-            width: 40%%;
+            width: 40%;
             vertical-align: top;
-        }
+        }}
         
-        .header-center {
+        .header-center {{
             display: table-cell;
-            width: 20%%;
+            width: 20%;
             text-align: center;
             vertical-align: top;
             padding: 0 10px;
-        }
+        }}
         
-        .header-right {
+        .header-right {{
             display: table-cell;
-            width: 40%%;
+            width: 40%;
             vertical-align: top;
             text-align: right;
-        }
+        }}
         
         /* Logo circular */
-        .logo-container {
+        .logo-container {{
             width: 60px;
             height: 60px;
-            border-radius: 50%%;
+            border-radius: 50%;
             overflow: hidden;
             background: #1a237e;
             display: inline-block;
             margin-bottom: 10px;
-        }
+        }}
         
-        .logo {
-            width: 100%%;
-            height: 100%%;
+        .logo {{
+            width: 100%;
+            height: 100%;
             object-fit: contain;
-        }
+        }}
         
-        .company-name {
+        .company-name {{
             font-size: 14px;
             font-weight: bold;
             margin: 5px 0;
-        }
+        }}
         
-        .company-info {
+        .company-info {{
             font-size: 10px;
             line-height: 1.3;
             color: #333;
-        }
+        }}
         
         /* Tipo de factura */
-        .doc-type-box {
+        .doc-type-box {{
             font-size: 48px;
             font-weight: bold;
             border: 3px solid #000;
@@ -527,93 +529,93 @@ class AccountMove(models.Model):
             align-items: center;
             justify-content: center;
             margin: 10px auto;
-        }
+        }}
         
-        .doc-code {
+        .doc-code {{
             font-size: 10px;
             margin-top: 5px;
-        }
+        }}
         
-        .invoice-title {
+        .invoice-title {{
             font-size: 20px;
             font-weight: bold;
             color: #1a237e;
             margin-bottom: 10px;
-        }
+        }}
         
-        .invoice-details {
+        .invoice-details {{
             font-size: 11px;
             line-height: 1.6;
             text-align: left;
-        }
+        }}
         
         /* Sección cliente */
-        .client-section {
+        .client-section {{
             background: #f5f5f5;
             padding: 15px;
             margin: 20px 0;
             border-radius: 5px;
-        }
+        }}
         
-        .client-grid {
+        .client-grid {{
             display: table;
-            width: 100%%;
-        }
+            width: 100%;
+        }}
         
-        .client-col {
+        .client-col {{
             display: table-cell;
-            width: 50%%;
+            width: 50%;
             padding-right: 20px;
-        }
+        }}
         
-        .client-row {
+        .client-row {{
             margin-bottom: 5px;
-        }
+        }}
         
-        .client-label {
+        .client-label {{
             font-weight: bold;
             color: #555;
             display: inline-block;
             min-width: 120px;
-        }
+        }}
         
         /* Tabla de items */
-        .items-table {
-            width: 100%%;
+        .items-table {{
+            width: 100%;
             border-collapse: collapse;
             margin: 20px 0;
-        }
+        }}
         
-        .items-table th {
+        .items-table th {{
             background: #1a237e;
             color: white;
             padding: 10px;
             text-align: left;
             font-weight: normal;
-        }
+        }}
         
-        .items-table td {
+        .items-table td {{
             padding: 10px;
             border-bottom: 1px solid #e0e0e0;
-        }
+        }}
         
         .items-table th.text-right,
-        .items-table td.text-right {
+        .items-table td.text-right {{
             text-align: right;
-        }
+        }}
         
         .items-table th.text-center,
-        .items-table td.text-center {
+        .items-table td.text-center {{
             text-align: center;
-        }
+        }}
         
         /* Totales */
-        .totals-section {
+        .totals-section {{
             margin-top: 30px;
             text-align: right;
-        }
+        }}
         
-        .total-box {
+        .total-box {{
             display: inline-block;
             background: #1a237e;
             color: white;
@@ -622,65 +624,65 @@ class AccountMove(models.Model):
             font-weight: bold;
             border-radius: 5px;
             margin-top: 10px;
-        }
+        }}
         
-        .total-words {
+        .total-words {{
             margin-top: 10px;
             font-style: italic;
-        }
+        }}
         
         /* Régimen transparencia */
-        .transparencia-box {
+        .transparencia-box {{
             background: #fff3cd;
             border: 1px solid #ffeaa7;
             padding: 10px;
             margin: 20px 0;
             border-radius: 5px;
-        }
+        }}
         
         /* Footer */
-        .footer {
+        .footer {{
             margin-top: 40px;
             padding-top: 20px;
             border-top: 2px solid #e0e0e0;
-        }
+        }}
         
-        .footer-content {
+        .footer-content {{
             display: table;
-            width: 100%%;
-        }
+            width: 100%;
+        }}
         
-        .footer-left {
+        .footer-left {{
             display: table-cell;
-            width: 70%%;
+            width: 70%;
             vertical-align: top;
-        }
+        }}
         
-        .footer-right {
+        .footer-right {{
             display: table-cell;
-            width: 30%%;
+            width: 30%;
             text-align: center;
             vertical-align: top;
-        }
+        }}
         
-        .cae-info {
+        .cae-info {{
             background: #f5f5f5;
             padding: 10px;
             border-radius: 5px;
             margin-bottom: 10px;
-        }
+        }}
         
-        .qr-code {
+        .qr-code {{
             width: 120px;
             height: 120px;
-        }
+        }}
         
-        .page-info {
+        .page-info {{
             text-align: center;
             margin-top: 20px;
             font-size: 10px;
             color: #666;
-        }
+        }}
     </style>
 </head>
 <body>
@@ -688,31 +690,31 @@ class AccountMove(models.Model):
     <div class="header">
         <div class="header-left">
             <div class="logo-container">
-                %s
+                {f'<img src="{logo_data}" class="logo" />' if logo_data else '<div style="width:100%;height:100%;background:#1a237e;"></div>'}
             </div>
-            <div class="company-name">%s</div>
+            <div class="company-name">{self.company_id.name}</div>
             <div class="company-info">
-                %s<br>
-                %s - %s - 
-                %s - %s<br>
-                %s - %s
+                {self.company_id.street or 'MENDOZA 7801'}<br>
+                {self.company_id.city or 'Rosario'} - {self.company_id.state_id.name or 'Santa Fe'} - 
+                {self.company_id.zip or 'S2000'} - {self.company_id.country_id.name or 'Argentina'}<br>
+                {self.company_id.website or 'gruponewlife.com.ar'} - {self.company_id.email or 'test@gruponewlife.com'}
             </div>
         </div>
         
         <div class="header-center">
-            <div class="doc-type-box">%s</div>
-            <div class="doc-code">Cod. %s</div>
+            <div class="doc-type-box">{doc_letter}</div>
+            <div class="doc-code">Cod. {doc_type_code}</div>
         </div>
         
         <div class="header-right">
-            <div class="invoice-title">%s</div>
+            <div class="invoice-title">{doc_type_name}</div>
             <div class="invoice-details">
-                <strong>Número:</strong> %s<br>
-                <strong>Fecha:</strong> %s<br>
+                <strong>Número:</strong> {doc_number}<br>
+                <strong>Fecha:</strong> {self.invoice_date.strftime('%d/%m/%Y') if self.invoice_date else ''}<br>
                 <strong>IVA Responsable Inscripto</strong><br>
-                <strong>CUIT:</strong> %s<br>
-                <strong>IIBB:</strong> %s<br>
-                <strong>Inicio de las actividades:</strong> %s
+                <strong>CUIT:</strong> {company_vat}<br>
+                <strong>IIBB:</strong> {gross_income}<br>
+                <strong>Inicio de las actividades:</strong> {start_date}
             </div>
         </div>
     </div>
@@ -722,24 +724,24 @@ class AccountMove(models.Model):
         <div class="client-grid">
             <div class="client-col">
                 <div class="client-row">
-                    <span class="client-label">Cliente:</span> %s
+                    <span class="client-label">Cliente:</span> {self.partner_id.name}
                 </div>
                 <div class="client-row">
-                    <span class="client-label">Domicilio:</span> %s, %s
+                    <span class="client-label">Domicilio:</span> {self.partner_id.street or ''}, {self.partner_id.city or ''}
                 </div>
                 <div class="client-row">
-                    <span class="client-label">Cond. IVA:</span> %s
+                    <span class="client-label">Cond. IVA:</span> {partner_resp_type}
                 </div>
             </div>
             <div class="client-col">
                 <div class="client-row">
-                    <span class="client-label">DNI:</span> %s
+                    <span class="client-label">DNI:</span> {partner_vat}
                 </div>
                 <div class="client-row">
-                    <span class="client-label">Fecha de vencimiento:</span> %s
+                    <span class="client-label">Fecha de vencimiento:</span> {self.invoice_date_due.strftime('%d/%m/%Y') if self.invoice_date_due else ''}
                 </div>
                 <div class="client-row">
-                    <span class="client-label">Origen:</span> %s
+                    <span class="client-label">Origen:</span> {self.invoice_origin or '00001501'}
                 </div>
             </div>
         </div>
@@ -749,34 +751,37 @@ class AccountMove(models.Model):
     <table class="items-table">
         <thead>
             <tr>
-                <th style="width: 50%%;">Descripción</th>
-                <th style="width: 15%%;" class="text-center">Cantidad</th>
-                <th style="width: 17%%;" class="text-right">Precio unitario</th>
-                <th style="width: 18%%;" class="text-right">Importe</th>
+                <th style="width: 50%;">Descripción</th>
+                <th style="width: 15%;" class="text-center">Cantidad</th>
+                <th style="width: 17%;" class="text-right">Precio unitario</th>
+                <th style="width: 18%;" class="text-right">Importe</th>
             </tr>
         </thead>
         <tbody>
-            %s
+            {items_html}
         </tbody>
     </table>
     
     <!-- TOTALES -->
     <div class="totals-section">
         <div class="total-box">
-            Total $ %s
+            Total $ {format_number(self.amount_total)}
         </div>
         <div class="total-words">
             Importe total con letra:<br>
-            %s
+            {total_words}
         </div>
     </div>
     
     <!-- Régimen de transparencia - Solo para facturas B -->
-    %s
+    {f'''<div class="transparencia-box">
+        <strong>Régimen de Transparencia Fiscal al Consumidor (Ley 27.743)</strong><br>
+        IVA Contenido $ {format_number(iva_contenido)}
+    </div>''' if not is_invoice_a else ''}
     
     <!-- Términos -->
     <div style="margin: 10px 0;">
-        Términos y condiciones: %s/terms
+        Términos y condiciones: {self.company_id.website or 'https://gruponewlife.com.ar'}/terms
     </div>
     
     <!-- FOOTER con CAE y QR -->
@@ -784,12 +789,12 @@ class AccountMove(models.Model):
         <div class="footer-content">
             <div class="footer-left">
                 <div class="cae-info">
-                    <strong>CAE:</strong> %s<br>
-                    <strong>Fecha de vencimiento CAE:</strong> %s
+                    <strong>CAE:</strong> {cae}<br>
+                    <strong>Fecha de vencimiento CAE:</strong> {cae_due}
                 </div>
             </div>
             <div class="footer-right">
-                <img src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=%s" class="qr-code" />
+                <img src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data={qr_url}" class="qr-code" />
             </div>
         </div>
     </div>
@@ -799,31 +804,7 @@ class AccountMove(models.Model):
     </div>
 </body>
 </html>
-""" % (
-            ('<img src="%s" class="logo" />' % logo_data) if logo_data else '<div style="width:100%%;height:100%%;background:#1a237e;"></div>',
-            self.company_id.name,
-            self.company_id.street or 'MENDOZA 7801',
-            self.company_id.city or 'Rosario', self.company_id.state_id.name or 'Santa Fe',
-            self.company_id.zip or 'S2000', self.company_id.country_id.name or 'Argentina',
-            self.company_id.website or 'gruponewlife.com.ar', self.company_id.email or 'test@gruponewlife.com',
-            doc_letter, doc_type_code, doc_type_name, doc_number,
-            self.invoice_date.strftime('%d/%m/%Y') if self.invoice_date else '',
-            company_vat, gross_income, start_date,
-            self.partner_id.name,
-            self.partner_id.street or '', self.partner_id.city or '',
-            partner_resp_type, partner_vat,
-            self.invoice_date_due.strftime('%d/%m/%Y') if self.invoice_date_due else '',
-            self.invoice_origin or '00001501',
-            items_html,
-            format_number(self.amount_total), total_words,
-            ('''<div class="transparencia-box">
-        <strong>Régimen de Transparencia Fiscal al Consumidor (Ley 27.743)</strong><br>
-        IVA Contenido $ %s
-    </div>''' % format_number(iva_contenido)) if not is_invoice_a else '',
-            self.company_id.website or 'https://gruponewlife.com.ar',
-            cae, cae_due, qr_url
-        )
-        
+"""
         return html
 
     def _num_to_words(self, amount):
@@ -848,7 +829,7 @@ class AccountMove(models.Model):
                 if miles == 1:
                     resultado.append("Mil")
                 else:
-                    resultado.append("%s Mil" % unidades[miles])
+                    resultado.append(f"{unidades[miles]} Mil")
             
             # Convertir centenas
             cent = resto // 100
@@ -874,7 +855,7 @@ class AccountMove(models.Model):
             return ' '.join(resultado) + ' Pesos'
             
         except:
-            return "%d Pesos" % int(amount)
+            return f"{int(amount)} Pesos"
 
     def _html_to_pdf_direct(self, html_content):
         """Convierte HTML a PDF usando wkhtmltopdf directamente - BYPASS COMPLETO"""
@@ -886,10 +867,6 @@ class AccountMove(models.Model):
             wkhtmltopdf = find_in_path('wkhtmltopdf')
             if not wkhtmltopdf:
                 raise UserError("wkhtmltopdf no está instalado en el servidor")
-
-            import os
-            if not os.path.isfile(wkhtmltopdf) or not os.access(wkhtmltopdf, os.X_OK):
-                raise UserError("wkhtmltopdf no es ejecutable o no existe")
             
             with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as html_file:
                 html_file.write(html_content)
@@ -913,12 +890,12 @@ class AccountMove(models.Model):
                 pdf_path
             ]
             
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             out, err = process.communicate()
             
             if process.returncode != 0:
                 _logger.error("wkhtmltopdf error: %s", err.decode())
-                raise UserError("Error generando PDF: %s" % err.decode())
+                raise UserError(f"Error generando PDF: {err.decode()}")
             
             with open(pdf_path, 'rb') as pdf_file:
                 pdf_content = pdf_file.read()
@@ -977,10 +954,10 @@ class AccountMove(models.Model):
             json_str = json.dumps(qr_data, separators=(',', ':'))
             encoded = base64.b64encode(json_str.encode()).decode()
             
-            return "https://www.afip.gob.ar/fe/qr/?p=%s" % encoded
+            return f"https://www.afip.gob.ar/fe/qr/?p={encoded}"
             
         except Exception as e:
-            _logger.warning("Error generating QR URL: %s", str(e))
+            _logger.warning(f"Error generating QR URL: {e}")
             # URL del QR de la factura de ejemplo
             return "https://www.afip.gob.ar/fe/qr/?p=eyJ2ZXIiOiAxLCAiZmVjaGEiOiAiMjAyNS0wNy0xMCIsICJjdWl0IjogMzA3MTY3MzQ0NDMsICJwdG9WdGEiOiAxLCAidGlwb0NtcCI6IDYsICJucm9DbXAiOiAzMDUsICJpbXBvcnRlIjogMzU5MC4wLCAibW9uZWRhIjogIlBFUyIsICJjdHoiOiAxLjAsICJ0aXBvQ29kQXV0IjogIkUiLCAiY29kQXV0IjogNzUyODM4OTUwMTEzNjIsICJ0aXBvRG9jUmVjIjogOTYsICJucm9Eb2NSZWMiOiAzMTU1NjEwM30="
 
@@ -1012,16 +989,16 @@ class AccountMove(models.Model):
             
             # URL correcta para subir facturas fiscales a ML
             # Formato: https://api.mercadolibre.com/packs/{pack_id}/fiscal_documents
-            ml_api_url = 'https://api.mercadolibre.com/packs/%s/fiscal_documents' % self.ml_pack_id
+            ml_api_url = f'https://api.mercadolibre.com/packs/{self.ml_pack_id}/fiscal_documents'
             
             # Preparar el archivo
             files = {
-                'fiscal_document': ('factura_%s.pdf' % self.name, pdf_content, 'application/pdf')
+                'fiscal_document': (f'factura_{self.name}.pdf', pdf_content, 'application/pdf')
             }
             
             # Headers con el token de la configuración
             headers = {
-                'Authorization': 'Bearer %s' % ml_config.access_token,
+                'Authorization': f'Bearer {ml_config.access_token}',
                 'Accept': 'application/json'
             }
             
@@ -1042,10 +1019,10 @@ class AccountMove(models.Model):
                 # Token expirado
                 raise UserError("Token expirado. Por favor, actualice el token en la configuración de MercadoLibre")
             elif response.status_code == 404:
-                raise UserError("Pack ID %s no encontrado en MercadoLibre" % self.ml_pack_id)
+                raise UserError(f"Pack ID {self.ml_pack_id} no encontrado en MercadoLibre")
             else:
                 error_data = response.json() if response.content else {}
-                error_msg = error_data.get('message', "HTTP %d: %s" % (response.status_code, response.text[:200]))
+                error_msg = error_data.get('message', f"HTTP {response.status_code}: {response.text[:200]}")
                 _logger.error("❌ Upload failed: %s", error_msg)
                 return {'success': False, 'error': error_msg}
                 
@@ -1054,11 +1031,11 @@ class AccountMove(models.Model):
             _logger.error(error_msg)
             return {'success': False, 'error': error_msg}
         except requests.exceptions.RequestException as e:
-            error_msg = "Error de conexión: %s" % str(e)
+            error_msg = f"Error de conexión: {str(e)}"
             _logger.error(error_msg)
             return {'success': False, 'error': error_msg}
         except Exception as e:
-            error_msg = "Error inesperado: %s" % str(e)
+            error_msg = f"Error inesperado: {str(e)}"
             _logger.error("❌ Upload exception: %s", error_msg, exc_info=True)
             return {'success': False, 'error': error_msg}
 
@@ -1107,7 +1084,7 @@ class AccountMove(models.Model):
             
             # Guardar como adjunto para verificación
             attachment = self.env['ir.attachment'].create({
-                'name': 'TEST_BYPASS_PDF_%s_%s.pdf' % (self.name, fields.Datetime.now()),
+                'name': f'TEST_BYPASS_PDF_{self.name}_{fields.Datetime.now()}.pdf',
                 'type': 'binary',
                 'datas': base64.b64encode(pdf_content),
                 'res_model': 'account.move',
@@ -1120,7 +1097,7 @@ class AccountMove(models.Model):
                 'tag': 'display_notification',
                 'params': {
                     'title': 'Test Exitoso - BYPASS',
-                    'message': 'PDF generado con bypass: %d bytes. Revisa los adjuntos.' % len(pdf_content),
+                    'message': f'PDF generado con bypass: {len(pdf_content)} bytes. Revisa los adjuntos.',
                     'sticky': False,
                 }
             }
@@ -1143,107 +1120,49 @@ class AccountMove(models.Model):
         self.ensure_one()
         
         info = []
-        info.append("=== SAFE HYBRID MODE ACTIVE ===")
+        info.append("=== BYPASS MODE ACTIVE ===")
         info.append("Not using Odoo reports system")
-        info.append("ODUMBO compatibility mode ON")
         info.append("")
         info.append("=== INVOICE DATA ===")
-        info.append("Name: %s" % self.name)
-        info.append("Partner: %s" % self.partner_id.name)
-        info.append("Total: $%s" % ("{:,.2f}".format(self.amount_total)))
-        info.append("ML Pack ID: %s" % (self.ml_pack_id or 'N/A'))
-        info.append("Is ML Sale: %s" % self.is_ml_sale)
-        info.append("")
-        info.append("=== AFIP SERVICE PERIODS ===")
-        info.append("Period From: %s" % (self.afip_associated_period_from or 'N/A'))
-        info.append("Period To: %s" % (self.afip_associated_period_to or 'N/A'))
+        info.append(f"Name: {self.name}")
+        info.append(f"Partner: {self.partner_id.name}")
+        info.append(f"Total: ${self.amount_total:,.2f}")
+        info.append(f"ML Pack ID: {self.ml_pack_id or 'N/A'}")
         info.append("")
         info.append("=== INVOICE LINES ===")
-        info.append("Total lines: %d" % len(self.invoice_line_ids))
+        info.append(f"Total lines: {len(self.invoice_line_ids)}")
         
         for idx, line in enumerate(self.invoice_line_ids):
-            product_type = line.product_id.type if line.product_id else 'N/A'
-            info.append("Line %d: qty=%s, price=%s, product_type=%s, name=%s" % (
-                idx+1, line.quantity, line.price_unit, product_type, line.name[:30]))
+            info.append(f"Line {idx+1}: qty={line.quantity}, price={line.price_unit}, name={line.name[:30]}")
+        
+        info.append("")
+        info.append("=== AFIP FIELDS STATUS ===")
+        
+        afip_fields = {
+            'l10n_ar_afip_auth_code': 'CAE',
+            'l10n_ar_afip_auth_code_due': 'CAE Due Date',
+            'l10n_latam_document_type_id': 'Document Type',
+            'l10n_latam_document_number': 'Document Number'
+        }
+        
+        for field, label in afip_fields.items():
+            if hasattr(self, field):
+                value = getattr(self, field)
+                info.append(f"✓ {label}: {value or 'Empty'}")
+            else:
+                info.append(f"✗ {label}: NOT FOUND")
         
         return {
             'type': 'ir.actions.client',
             'tag': 'display_notification',
             'params': {
-                'title': 'Debug Info - Safe Hybrid Mode',
+                'title': 'Debug Info - Bypass Mode',
                 'message': '\n'.join(info),
                 'sticky': True,
             }
         }
-        
-    def action_fix_ml_data_from_sale_orders(self):
-        """Intenta corregir datos ML desde Sale Orders vinculadas - VERSIÓN SEGURA"""
-        fixed_count = 0
-        for record in self:
-            if record.is_ml_sale or not record.invoice_origin:
-                continue
-                
-            try:
-                # ACCESO SEGURO A SALE ORDER - Sin locks
-                sale_order = self.env['sale.order'].search([
-                    ('name', '=', record.invoice_origin)
-                ], limit=1)
-                
-                if not sale_order:
-                    continue
-                
-                # VERIFICACIÓN SEGURA DE CAMPOS ML
-                has_ml_data = False
-                ml_pack_id = None
-                
-                # Verificar usando getattr para evitar errores de atributo
-                if hasattr(sale_order, 'is_ml_sale') and getattr(sale_order, 'is_ml_sale', False):
-                    has_ml_data = True
-                    if hasattr(sale_order, 'ml_pack_id'):
-                        ml_pack_id = getattr(sale_order, 'ml_pack_id', None)
-                
-                if has_ml_data:
-                    update_vals = {'is_ml_sale': True}
-                    
-                    if ml_pack_id:
-                        update_vals['ml_pack_id'] = ml_pack_id
-                    
-                    # También corregir períodos AFIP si es necesario
-                    if not record.afip_associated_period_from:
-                        has_services = any(
-                            line.product_id and hasattr(line.product_id, 'type') and line.product_id.type == 'service' 
-                            for line in record.invoice_line_ids
-                        )
-                        if has_services:
-                            update_vals.update({
-                                'afip_associated_period_from': record.invoice_date or fields.Date.today(),
-                                'afip_associated_period_to': record.invoice_date or fields.Date.today(),
-                            })
-                    
-                    record.write(update_vals)
-                    fixed_count += 1
-                    _logger.info('Fixed ML data for invoice %s', record.name)
-                    
-            except Exception as e:
-                # Error de acceso seguro - continuar sin fallar
-                _logger.warning('Could not safely fix ML data for invoice %s: %s', record.name, str(e))
-                continue
-        
-        return {
-            'type': 'ir.actions.client',
-            'tag': 'display_notification',
-            'params': {
-                'title': '%d Facturas Corregidas' % fixed_count,
-                'message': 'Se corrigieron los datos ML de %d facturas' % fixed_count,
-                'type': 'success' if fixed_count > 0 else 'info'
-            }
-        }
 
-    # Compatibilidad y métodos retrocompatibles
+    # Compatibilidad
     def action_upload_to_mercadolibre(self):
         """Retrocompatibilidad"""
         return self.action_upload_to_ml()
-
-    def _generate_pdf_targeted_report(self):
-        """Retrocompatibilidad"""
-        return self._generate_pdf_direct_bypass()
