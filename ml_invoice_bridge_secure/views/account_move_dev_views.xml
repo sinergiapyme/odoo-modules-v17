@@ -1,72 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
-    <!-- Vista extendida de Sale Order -->
-    <record id="view_order_form_ml_extension" model="ir.ui.view">
-        <field name="name">sale.order.form.ml.extension</field>
-        <field name="model">sale.order</field>
-        <field name="inherit_id" ref="sale.view_order_form"/>
+    <!-- Vista adicional SOLO para desarrolladores/administradores -->
+    <record id="view_move_form_ml_dev_testing" model="ir.ui.view">
+        <field name="name">account.move.form.ml.dev.testing</field>
+        <field name="model">account.move</field>
+        <field name="inherit_id" ref="ml_invoice_bridge_secure.view_move_form_ml_extension"/>
         <field name="arch" type="xml">
-            <xpath expr="//field[@name='client_order_ref']" position="after">
-                <group name="mercadolibre_so" string="📦 MercadoLibre Data" invisible="not is_ml_sale">
-                    <field name="is_ml_sale" string="ML Sale"/>
-                    <field name="ml_pack_id" string="Pack ID" readonly="1"/>
-                    <field name="origin" string="Origin" readonly="1" invisible="not origin"/>
-                </group>
+            <!-- Botones de testing adicionales SOLO para grupos técnicos -->
+            <xpath expr="//button[@name='action_test_pdf_generation']" position="after">
+                <button name="action_debug_available_reports" 
+                        string="📊 Debug Info" 
+                        type="object" 
+                        class="btn-secondary"
+                        groups="base.group_no_one"
+                        title="Debug ML data and invoice info"/>
             </xpath>
-        </field>
-    </record>
-
-    <!-- Vista tree extendida -->
-    <record id="view_quotation_tree_ml_extension" model="ir.ui.view">
-        <field name="name">sale.order.tree.ml.extension</field>
-        <field name="model">sale.order</field>
-        <field name="inherit_id" ref="sale.view_quotation_tree"/>
-        <field name="arch" type="xml">
-            <xpath expr="//field[@name='amount_total']" position="after">
-                <field name="is_ml_sale" string="ML" optional="show"/>
-                <field name="ml_pack_id" string="Pack ID" optional="hide"/>
-            </xpath>
-        </field>
-    </record>
-
-    <!-- Search view extendido -->
-    <record id="view_sales_order_filter_ml_extension" model="ir.ui.view">
-        <field name="name">sale.order.search.ml.extension</field>
-        <field name="model">sale.order</field>
-        <field name="inherit_id" ref="sale.view_sales_order_filter"/>
-        <field name="arch" type="xml">
-            <xpath expr="//filter[@name='my_sale_orders_filter']" position="after">
-                <separator/>
-                <filter string="MercadoLibre Orders" name="filter_ml_orders" domain="[('is_ml_sale', '=', True)]"/>
-                <filter string="Non-ML Orders" name="filter_non_ml_orders" domain="[('is_ml_sale', '=', False)]"/>
-            </xpath>
-            
-            <xpath expr="//field[@name='partner_id']" position="after">
-                <field name="ml_pack_id" string="ML Pack ID"/>
-            </xpath>
-        </field>
-    </record>
-
-    <!-- Action para Sale Orders ML -->
-    <record id="action_sale_orders_ml" model="ir.actions.act_window">
-        <field name="name">Sale Orders MercadoLibre</field>
-        <field name="res_model">sale.order</field>
-        <field name="view_mode">tree,form</field>
-        <field name="domain">[('is_ml_sale', '=', True)]</field>
-        <field name="context">{'search_default_filter_ml_orders': 1}</field>
-        <field name="help" type="html">
-            <p class="o_view_nocontent_smiling_face">
-                No hay órdenes de venta de MercadoLibre
-            </p>
-            <p>
-                Las órdenes de venta de MercadoLibre sincronizadas por ODUMBO aparecerán aquí.<br/>
-                <strong>Verificar:</strong>
-            </p>
-            <ul>
-                <li>✅ Campo "ML Sale" marcado</li>
-                <li>✅ "Pack ID" poblado correctamente</li>
-                <li>✅ Origin contiene datos de MercadoLibre</li>
-            </ul>
         </field>
     </record>
 </odoo>
