@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
-    <!-- Vista principal de formulario -->
+    <!-- UNA SOLA vista de formulario - LIMPIA Y PROFESIONAL -->
     <record id="view_move_form_ml_extension" model="ir.ui.view">
         <field name="name">account.move.form.ml.extension</field>
         <field name="model">account.move</field>
@@ -8,119 +8,101 @@
         <field name="arch" type="xml">
             <!-- Botón principal en header -->
             <xpath expr="//header" position="inside">
-                <button name="action_upload_to_mercadolibre" 
+                <button name="action_upload_to_ml" 
                         string="📤 Upload to MercadoLibre" 
                         type="object" 
                         class="btn-primary" 
                         invisible="not is_ml_sale or ml_uploaded or state != 'posted'"
                         confirm="¿Confirma subir esta factura a MercadoLibre?"/>
                 
+                <!-- 🆕 NUEVO: Botón de corrección ML - CONSERVADOR -->
+                <button name="action_fix_ml_data_from_sale_orders" 
+                        string="🔧 Fix ML Data" 
+                        type="object" 
+                        class="btn-warning" 
+                        invisible="is_ml_sale"
+                        help="Corregir datos ML faltantes desde Sale Order vinculada"
+                        confirm="¿Intentar corregir datos ML desde la venta vinculada?"/>
+                
+                <!-- Botón de reset SOLO para admin cuando está subida -->
                 <button name="action_reset_ml_upload" 
                         string="🔄 Reset ML Upload" 
                         type="object" 
                         class="btn-warning" 
                         groups="base.group_system"
                         invisible="not ml_uploaded"
-                        confirm="¿Está seguro de resetear el estado de upload?"/>
+                        confirm="¿Está seguro de resetear el estado de upload? Esto permitirá subir la factura nuevamente."/>
+                        
+                <!-- Botones de testing SOLO para desarrolladores -->
+                <div groups="base.group_no_one">
+                    <button name="action_test_pdf_generation" 
+                            string="🧪 Test PDF" 
+                            type="object" 
+                            class="btn-secondary"/>
+                </div>
             </xpath>
             
-            <!-- Campos ML en sección organizada -->
+            <!-- Campos ML - Solo cuando es relevante -->
             <xpath expr="//field[@name='ref']" position="after">
                 <group name="mercadolibre_info" string="📦 MercadoLibre" invisible="not is_ml_sale">
-                    <group name="ml_basic" string="Información Básica">
-                        <field name="is_ml_sale" string="Venta ML"/>
-                        <field name="ml_pack_id" 
-                               string="Pack ID" 
-                               placeholder="Ej: 2000008457814991"
-                               widget="char"
-                               options="{'size': 20}"/>
-                    </group>
+                    <field name="is_ml_sale" string="Venta ML"/>
+                    <field name="ml_pack_id" string="Pack ID" required="is_ml_sale" placeholder="Ejemplo: 2000008457814991"/>
                     
-                    <group name="ml_status" string="Estado del Upload" invisible="not ml_pack_id">
-                        <field name="ml_uploaded" string="Subida a ML" readonly="1"/>
-                        <field name="upload_status" 
-                               string="Estado" 
-                               readonly="1" 
-                               widget="badge"
-                               decoration-success="upload_status == 'uploaded'"
-                               decoration-info="upload_status == 'uploading'"
-                               decoration-warning="upload_status == 'pending'"
-                               decoration-danger="upload_status == 'error'"/>
-                        <field name="ml_upload_date" string="Fecha de subida" readonly="1" invisible="not ml_upload_date"/>
-                        <field name="last_upload_attempt" string="Último intento" readonly="1" invisible="not last_upload_attempt"/>
-                    </group>
-                    
-                    <group name="ml_error" string="⚠️ Error Details" invisible="not upload_error">
-                        <field name="upload_error" 
-                               string="Error" 
-                               readonly="1" 
-                               widget="text"
-                               nolabel="1"/>
-                    </group>
-                    
-                    <group name="ml_debug" string="🔍 Debug Info" groups="base.group_no_one">
-                        <field name="invoice_origin" string="Invoice Origin" readonly="1"/>
-                        <button name="action_fix_ml_data_from_sale_orders" 
-                                string="🔧 Fix ML Data" 
-                                type="object" 
-                                class="btn-warning"
-                                invisible="is_ml_sale"
-                                help="Intentar corregir datos ML desde Sale Orders vinculadas"/>
-                        <button name="action_test_pdf_generation" 
-                                string="🧪 Test PDF" 
-                                type="object" 
-                                class="btn-secondary"
-                                invisible="not is_ml_sale"/>
-                    </group>
+                    <!-- Estado de upload -->
+                    <separator string="Estado del Upload" invisible="not ml_pack_id"/>
+                    <field name="ml_uploaded" string="Subida a ML" readonly="1" invisible="not ml_pack_id"/>
+                    <field name="upload_status" string="Estado" readonly="1" invisible="upload_status == 'pending' or not ml_pack_id"/>
+                    <field name="ml_upload_date" string="Fecha de subida" readonly="1" invisible="not ml_upload_date"/>
+                    <field name="last_upload_attempt" string="Último intento" readonly="1" invisible="not last_upload_attempt"/>
+                    <field name="upload_error" string="Error" readonly="1" invisible="not upload_error" widget="text"/>
                 </group>
             </xpath>
         </field>
     </record>
 
-    <!-- Vista tree con campos ML -->
-    <record id="view_move_tree_ml_extension" model="ir.ui.view">
-        <field name="name">account.move.tree.ml.extension</field>
-        <field name="model">account.move</field>
-        <field name="inherit_id" ref="account.view_move_tree"/>
-        <field name="arch" type="xml">
-            <xpath expr="//field[@name='amount_total']" position="after">
-                <field name="is_ml_sale" invisible="1"/>
-                <field name="ml_pack_id" string="Pack ID" optional="hide" invisible="not is_ml_sale"/>
-                <field name="upload_status" 
-                       string="ML Status" 
-                       optional="show"
-                       invisible="not is_ml_sale"
-                       widget="badge"
-                       decoration-success="upload_status == 'uploaded'"
-                       decoration-danger="upload_status == 'error'"/>
-            </xpath>
-        </field>
-    </record>
+    <!-- 🆕 NUEVO: Action Server para corrección masiva - CONSERVADOR -->
+    <record id="action_fix_ml_data_bulk" model="ir.actions.server">
+        <field name="name">🔧 Fix ML Data (Bulk)</field>
+        <field name="model_id" ref="account.model_account_move"/>
+        <field name="binding_model_id" ref="account.model_account_move"/>
+        <field name="binding_view_types">list</field>
+        <field name="state">code</field>
+        <field name="code">
+# Procesar solo facturas que no son ML y tienen invoice_origin
+candidates = records.filtered(lambda r: not r.is_ml_sale and r.invoice_origin)
 
-    <!-- Search view mejorado -->
-    <record id="view_move_search_ml_extension" model="ir.ui.view">
-        <field name="name">account.move.search.ml.extension</field>
-        <field name="model">account.move</field>
-        <field name="inherit_id" ref="account.view_account_move_filter"/>
-        <field name="arch" type="xml">
-            <xpath expr="//filter[@name='posted']" position="after">
-                <separator/>
-                <filter string="MercadoLibre Sales" name="filter_ml_sales" domain="[('is_ml_sale', '=', True)]"/>
-                <filter string="ML Not Uploaded" name="filter_not_uploaded" domain="[('is_ml_sale', '=', True), ('ml_uploaded', '=', False)]"/>
-                <filter string="ML Upload Errors" name="filter_upload_errors" domain="[('upload_status', '=', 'error')]"/>
-                <filter string="ML Uploaded" name="filter_uploaded" domain="[('ml_uploaded', '=', True)]"/>
-                <filter string="🔍 Possible ML Missing Data" 
-                        name="filter_possible_ml_missing" 
-                        domain="[('is_ml_sale', '=', False), ('invoice_origin', 'ilike', 'mercado')]"/>
-            </xpath>
-            
-            <xpath expr="//group[@name='groupby']" position="inside">
-                <filter string="ML Upload Status" name="group_upload_status" context="{'group_by': 'upload_status'}"/>
-            </xpath>
-            
-            <xpath expr="//field[@name='partner_id']" position="after">
-                <field name="ml_pack_id" string="Pack ID"/>
-            </xpath>
+if not candidates:
+    action = {
+        'type': 'ir.actions.client',
+        'tag': 'display_notification',
+        'params': {
+            'title': 'Sin Candidatos',
+            'message': 'No hay facturas candidatas para corrección ML',
+            'type': 'info'
+        }
+    }
+else:
+    total_fixed = 0
+    for record in candidates:
+        try:
+            result = record.action_fix_ml_data_from_sale_orders()
+            # Extraer número de facturas corregidas del resultado
+            if result and result.get('params', {}).get('title', '').split():
+                first_word = result['params']['title'].split()[0]
+                if first_word.isdigit() and int(first_word) > 0:
+                    total_fixed += int(first_word)
+        except Exception:
+            continue
+    
+    action = {
+        'type': 'ir.actions.client',
+        'tag': 'display_notification',
+        'params': {
+            'title': 'Corrección Masiva Completada',
+            'message': 'Procesadas: %d facturas | Corregidas: %d facturas' % (len(candidates), total_fixed),
+            'type': 'success' if total_fixed > 0 else 'info'
+        }
+    }
         </field>
     </record>
 
@@ -130,50 +112,15 @@
         <field name="res_model">account.move</field>
         <field name="view_mode">tree,form</field>
         <field name="domain">[('is_ml_sale', '=', True)]</field>
-        <field name="context">{
-            'default_is_ml_sale': True, 
-            'create': False,
-            'search_default_filter_not_uploaded': 1
-        }</field>
-        <field name="search_view_id" ref="view_move_search_ml_extension"/>
+        <field name="context">{'default_is_ml_sale': True, 'create': False}</field>
         <field name="help" type="html">
             <p class="o_view_nocontent_smiling_face">
                 No hay facturas de MercadoLibre
             </p>
             <p>
-                Las facturas de MercadoLibre aparecerán aquí automáticamente cuando ODUMBO sincronice las ventas.<br/>
-                <strong>Proceso:</strong>
+                Las facturas de MercadoLibre aparecerán aquí.<br/>
+                Para marcar una factura como ML: edítala y marca "Venta ML" + asigna "Pack ID".
             </p>
-            <ol>
-                <li>ODUMBO sincroniza venta ML → Sale Order</li>
-                <li>Se genera factura desde Sale Order (individual o lote)</li>
-                <li>Factura se auto-detecta como ML</li>
-                <li>Usar botón "Upload to MercadoLibre" para subir</li>
-            </ol>
-        </field>
-    </record>
-
-    <!-- Acción para corregir datos ML -->
-    <record id="action_fix_ml_data_invoices" model="ir.actions.server">
-        <field name="name">Fix ML Data from Sale Orders</field>
-        <field name="model_id" ref="account.model_account_move"/>
-        <field name="binding_model_id" ref="account.model_account_move"/>
-        <field name="binding_view_types">list</field>
-        <field name="state">code</field>
-        <field name="code">
-records_to_fix = records.filtered(lambda r: not r.is_ml_sale and r.move_type in ['out_invoice', 'out_refund'])
-if records_to_fix:
-    action = records_to_fix.action_fix_ml_data_from_sale_orders()
-else:
-    action = {
-        'type': 'ir.actions.client',
-        'tag': 'display_notification',
-        'params': {
-            'title': 'Sin Facturas para Corregir',
-            'message': 'Seleccione facturas que no sean de ML para intentar corregir.',
-            'type': 'warning'
-        }
-    }
         </field>
     </record>
 </odoo>
