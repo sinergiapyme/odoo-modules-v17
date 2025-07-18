@@ -135,8 +135,8 @@ class AccountMove(models.Model):
         
         return None
 
-    def action_force_detect_ml(self):
-        """Acción manual para forzar detección ML"""
+    def action_fix_ml_data(self):
+        """Acción para botón "Fix ML Data" - Detecta ML y extrae Pack ID"""
         self.ensure_one()
         
         old_is_ml = self.is_ml_sale
@@ -145,15 +145,105 @@ class AccountMove(models.Model):
         # Forzar recálculo del computed field
         self._compute_is_ml_sale()
         
+        # Mensaje detallado
+        changes = []
+        if old_is_ml != self.is_ml_sale:
+            changes.append(f"ML: {old_is_ml} → {self.is_ml_sale}")
+        if old_pack_id != self.ml_pack_id:
+            changes.append(f"Pack ID: {old_pack_id or 'None'} → {self.ml_pack_id or 'None'}")
+        
+        if changes:
+            message = "Cambios detectados:\n" + "\n".join(changes)
+            msg_type = 'success'
+        else:
+            message = "No se detectaron cambios ML para esta factura"
+            msg_type = 'info'
+        
         return {
             'type': 'ir.actions.client',
             'tag': 'display_notification',
             'params': {
-                'title': 'Detección ML',
-                'message': f'ML: {old_is_ml}→{self.is_ml_sale}, Pack ID: {old_pack_id or "None"}→{self.ml_pack_id or "None"}',
+                'title': 'Fix ML Data',
+                'message': message,
+                'type': msg_type,
                 'sticky': False,
             }
         }
+
+    def action_fix_ml_data_bulk(self):
+        """Acción masiva para detectar ML en facturas seleccionadas"""
+        if not self:
+            return {
+                'type': 'ir.actions.client',
+                'tag': 'display_notification',
+                'params': {
+                    'title': 'Fix ML Data Bulk',
+                    'message': 'No hay facturas seleccionadas',
+                    'type': 'warning',
+                }
+            }
+        
+        ml_detected = 0
+        pack_ids_found = 0
+        errors = 0
+        processed = 0
+        
+        for move in self:
+            try:
+                # Solo procesar facturas de cliente
+                if move.move_type not in ('out_invoice', 'out_refund'):
+                    continue
+                    
+                old_is_ml = move.is_ml_sale
+                old_pack_id = move.ml_pack_id
+                
+                # Forzar recálculo
+                move._compute_is_ml_sale()
+                processed += 1
+                
+                # Contar cambios
+                if move.is_ml_sale and not old_is_ml:
+                    ml_detected += 1
+                    
+                if move.ml_pack_id and not old_pack_id:
+                    pack_ids_found += 1
+                    
+            except Exception as e:
+                errors += 1
+                _logger.error(f"Error processing {move.name}: {e}")
+        
+        # Crear logs para las facturas ML detectadas
+        ml_invoices = self.filtered('is_ml_sale')
+        for invoice in ml_invoices:
+            if invoice.ml_pack_id:
+                self.env['mercadolibre.log'].create_log(
+                    invoice_id=invoice.id,
+                    status='success',
+                    message=f'ML data detected in bulk operation - Pack ID: {invoice.ml_pack_id}',
+                    ml_pack_id=invoice.ml_pack_id
+                )
+        
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'title': 'Fix ML Data - Procesamiento Masivo',
+                'message': f"""Resultado del procesamiento:
+                
+📊 Facturas procesadas: {processed}
+✅ ML detectadas: {ml_detected}
+📦 Pack IDs encontrados: {pack_ids_found}
+❌ Errores: {errors}
+
+Las facturas ML detectadas ahora aparecerán en MercadoLibre > ML Invoices""",
+                'type': 'success' if ml_detected > 0 else 'info',
+                'sticky': True,
+            }
+        }
+
+    def action_force_detect_ml(self):
+        """Acción manual para forzar detección ML - ALIAS"""
+        return self.action_fix_ml_data()
 
     def action_upload_to_ml(self):
         """Acción principal: generar PDF legal y subir a ML"""
