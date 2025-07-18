@@ -1253,12 +1253,6 @@ class AccountMove(models.Model):
             }
         }
 
-    # Compatibilidad
-    def action_upload_to_mercadolibre(self):
-        """Retrocompatibilidad"""
-        return self.action_upload_to_ml()
-
-    # Agregar al final de AccountMove en GitHub:
     def _generate_pdf_targeted_report(self):
         """Retrocompatibilidad"""
         return self._generate_pdf_direct_bypass()
