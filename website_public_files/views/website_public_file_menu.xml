@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <menuitem id="menu_website_public_files_root"
+              name="Public Files"
+              parent="website.menu_website_configuration"
+              sequence="50"/>
+    
+    <menuitem id="menu_website_public_files"
+              name="Manage Files"
+              parent="menu_website_public_files_root"
+              action="action_website_public_file"
+              sequence="10"/>
+</odoo>
