@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data>
+        <!-- Add discount fields to partner form -->
+        <record id="res_partner_view_form_discount" model="ir.ui.view">
+            <field name="name">res.partner.view.form.discount</field>
+            <field name="model">res.partner</field>
+            <field name="inherit_id" ref="base.view_partner_form"/>
+            <field name="arch" type="xml">
+                <xpath expr="//group[@name='sale']" position="inside">
+                    <field name="customer_discount" widget="percentage"/>
+                    <field name="supplier_discount" widget="percentage"/>
+                </xpath>
+            </field>
+        </record>
+    </data>
+</odoo>
