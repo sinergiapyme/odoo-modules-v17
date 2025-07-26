@@ -1,0 +1,4 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+# No se requieren permisos especiales adicionales
+# Los campos customer_discount y supplier_discount se agregan directamente a res.partner
+# Los permisos se heredan automáticamente del modelo res.partner existente
