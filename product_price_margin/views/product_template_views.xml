@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Vista Form - Agregar campos de margen -->
+    <record id="product_template_form_view_margin" model="ir.ui.view">
+        <field name="name">product.template.form.margin</field>
+        <field name="model">product.template</field>
+        <field name="inherit_id" ref="product.product_template_form_view"/>
+        <field name="arch" type="xml">
+            <!-- Agregar campos después del precio de venta en la pestaña Información general -->
+            <xpath expr="//page[@name='general_information']//field[@name='list_price']" position="after">
+                <field name="price_margin_percent" string="Margen %"/>
+                <field name="automatic_price_update"/>
+            </xpath>
+            
+            <!-- Agregar botón en el header VISIBLE Y DESTACADO -->
+            <xpath expr="//header" position="inside">
+                <button name="action_update_price_from_margin" 
+                        type="object" 
+                        string="↻ Actualizar Precio" 
+                        class="btn-primary"
+                        invisible="not automatic_price_update"
+                        confirm="¿Actualizar el precio según el margen definido?"
+                        help="Recalcula el precio de venta basado en el costo actual y el margen"/>
+            </xpath>
+        </field>
+    </record>
+    
+    <!-- Vista Tree - Mostrar margen -->
+    <record id="product_template_tree_view_margin" model="ir.ui.view">
+        <field name="name">product.template.tree.margin</field>
+        <field name="model">product.template</field>
+        <field name="inherit_id" ref="product.product_template_tree_view"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='list_price']" position="after">
+                <field name="price_margin_percent" string="Margen %" optional="show"/>
+                <field name="automatic_price_update" string="Auto Precio" optional="hide"/>
+            </xpath>
+        </field>
+    </record>
+    
+    <!-- Acción de servidor para actualización masiva -->
+    <record id="action_server_update_prices_margin" model="ir.actions.server">
+        <field name="name">↻ Actualizar Precios según Margen</field>
+        <field name="model_id" ref="product.model_product_template"/>
+        <field name="binding_model_id" ref="product.model_product_template"/>
+        <field name="binding_view_types">list</field>
+        <field name="state">code</field>
+        <field name="code">
+if records:
+    action = records.action_update_price_from_margin()
+else:
+    raise UserError('Por favor seleccione al menos un producto.')
+        </field>
+    </record>
+    
+    <!-- Filtro para productos con actualización automática -->
+    <record id="product_template_search_view_margin" model="ir.ui.view">
+        <field name="name">product.template.search.margin</field>
+        <field name="model">product.template</field>
+        <field name="inherit_id" ref="product.product_template_search_view"/>
+        <field name="arch" type="xml">
+            <!-- Buscar después del filtro de archivados -->
+            <xpath expr="//filter[@name='filter_to_sell']" position="after">
+                <separator/>
+                <filter string="Actualización Automática Activa" 
+                        name="automatic_update_active" 
+                        domain="[('automatic_price_update', '=', True)]"/>
+                <filter string="Con Margen Definido" 
+                        name="has_margin" 
+                        domain="[('price_margin_percent', '!=', 0)]"/>
+            </xpath>
+            
+            <!-- Agregar agrupación -->
+            <xpath expr="//group" position="inside">
+                <filter string="Margen %" name="group_by_margin" context="{'group_by': 'price_margin_percent'}"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>
